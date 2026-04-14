@@ -1,0 +1,21 @@
+{
+    "name": "kiosk-manager",
+    "version": "1.0.0",
+    "description": "Kiosk Management Client Desktop App",
+    "main": "main.js",
+    "scripts": {
+        "start": "electron .",
+        "build": "electron-builder --win"
+    },
+    "build": {
+        "appId": "com.kiosksys.manager",
+        "productName": "Kiosk Manager",
+        "win": {
+            "target": "portable"
+        }
+    },
+    "devDependencies": {
+        "electron": "^41.2.0",
+        "electron-builder": "^26.8.1"
+    }
+}

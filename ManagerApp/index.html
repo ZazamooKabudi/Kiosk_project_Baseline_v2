@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kiosk Manager</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body class="dark-theme">
+
+    
+    <!-- SETUP OVERLAY -->
+    <div id="setup-overlay" class="modal" style="display: none; background: var(--bg-color); z-index: 10001;">
+        <div class="modal-content" style="max-width: 350px;">
+            <h2 style="text-align: center; margin-bottom: 20px;">Manager Setup</h2>
+            <form id="setup-form">
+                <div class="form-group">
+                    <label>Server URL</label>
+                    <input type="text" id="server-url-input" placeholder="http://127.0.0.1:3000" required>
+                </div>
+                <button type="submit" class="btn btn-primary" style="width: 100%;">Connect</button>
+                <div id="setup-error" style="color: var(--danger); margin-top: 10px; display: none; text-align: center;">Connection failed</div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Login Overlay -->
+    <div id="login-overlay" class="modal" style="display: flex; background: var(--bg-color); z-index: 10000;">
+        <div class="modal-content" style="max-width: 350px;">
+            <h2 style="text-align: center; margin-bottom: 20px;">Kiosk Manager Login</h2>
+            <form id="login-form">
+                <div class="form-group">
+                    <label>Username</label>
+                    <input type="text" id="login-user" required>
+                </div>
+                <div class="form-group">
+                    <label>Password</label>
+                    <input type="password" id="login-pass" required>
+                </div>
+                <button type="submit" class="btn btn-primary" style="width: 100%;">Login</button>
+                <div id="login-error"
+                    style="color: var(--danger); margin-top: 10px; display: none; text-align: center;">Invalid
+                    credentials</div>
+            </form>
+        </div>
+    </div>
+
+    <div class="app-container" id="app-container" style="display: none;">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-header" style="display: flex; flex-direction: column; align-items: stretch; gap: 15px;">
+                <h2 style="margin:0; text-align: center;">Kiosk Manager</h2>
+                <div
+                    style="display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.1); padding: 5px; border-radius: 5px; gap: 5px;">
+                    <button class="btn btn-danger" id="logout-btn" style="flex:1; font-size:12px; padding: 5px;"
+                        title="Logout">🚪 Logout</button>
+                    <button class="icon-btn" id="config-btn" title="Server Settings" style="flex:0.5; font-size:12px; padding: 5px; background:transparent; border:1px solid #ccc; color:inherit;">⚙ Config</button>
+                    <button class="btn btn-settings" id="settings-btn" style="flex:1; font-size:12px; padding: 5px;"
+                        title="Settings" id="settings-btn">⚙️ Settings</button>
+                </div>
+            </div>
+
+            <div class="sidebar-nav">
+                <h3>Areas</h3>
+                <ul id="area-list" class="area-list">
+                    <!-- Area list populated by JS -->
+                </ul>
+                <button id="add-area-btn" class="btn btn-outline">+ Add Area</button>
+            </div>
+
+            <!-- Connection Status -->
+            <div
+                style="padding: 10px; font-size: 12px; border-top: 1px solid var(--border-color); color: var(--secondary-color);">
+                Status: Local Server
+                <div id="conn-status" style="margin-top: 5px;" class="status online">Online</div>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <header class="topbar">
+                <h1 id="current-area-title">Select an Area</h1>
+                <div class="user-info" id="current-user-display">
+                    User
+                </div>
+            </header>
+
+            <div class="content">
+                <!-- Kiosks View -->
+                <div id="kiosk-container" style="display: none;">
+                    <div class="action-bar">
+                        <button id="add-kiosk-btn" class="btn btn-primary">Add Kiosk</button>
+                        <button id="refresh-btn" class="btn btn-secondary">Refresh Status</button>
+                    </div>
+
+                    <table class="kiosk-table">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Status</th>
+                                <th>Computer Name</th>
+                                <th>IP Address</th>
+                                <th>Description</th>
+                                <th>Notes</th>
+                                <th>Last Sampled</th>
+                                <th>Links</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="kiosk-table-body">
+                            <!-- Kiosks populated by JS -->
+                        </tbody>
+                    </table>
+                </div>
+
+                <div id="welcome-message">
+                    Select an area from the sidebar to manage kiosks.
+                </div>
+
+                <!-- Settings View -->
+                <div id="settings-container" style="display: none;">
+                    <h2 style="margin-bottom: 24px;">⚙️ Settings</h2>
+
+                    <!-- ── THEME ── -->
+                    <div class="settings-card">
+                        <div class="settings-card-header">
+                            <span class="settings-card-icon">🎨</span>
+                            <h3>App Theme</h3>
+                        </div>
+                        <p class="settings-desc">Choose a color theme for the management console.</p>
+                        <div class="theme-grid" id="theme-grid">
+                            <label class="theme-option" data-theme="dark">
+                                <input type="radio" name="theme" value="dark">
+                                <span class="theme-swatch swatch-dark"></span>
+                                <span>Dark</span>
+                            </label>
+                            <label class="theme-option" data-theme="light">
+                                <input type="radio" name="theme" value="light">
+                                <span class="theme-swatch swatch-light"></span>
+                                <span>Light</span>
+                            </label>
+                            <label class="theme-option" data-theme="blue">
+                                <input type="radio" name="theme" value="blue">
+                                <span class="theme-swatch swatch-blue"></span>
+                                <span>Blue</span>
+                            </label>
+                            <label class="theme-option" data-theme="green">
+                                <input type="radio" name="theme" value="green">
+                                <span class="theme-swatch swatch-green"></span>
+                                <span>Green</span>
+                            </label>
+                            <label class="theme-option" data-theme="purple">
+                                <input type="radio" name="theme" value="purple">
+                                <span class="theme-swatch swatch-purple"></span>
+                                <span>Purple</span>
+                            </label>
+                            <label class="theme-option" data-theme="red">
+                                <input type="radio" name="theme" value="red">
+                                <span class="theme-swatch swatch-red"></span>
+                                <span>Red</span>
+                            </label>
+                            <label class="theme-option" data-theme="orange">
+                                <input type="radio" name="theme" value="orange">
+                                <span class="theme-swatch swatch-orange"></span>
+                                <span>Orange</span>
+                            </label>
+                            <label class="theme-option" data-theme="teal">
+                                <input type="radio" name="theme" value="teal">
+                                <span class="theme-swatch swatch-teal"></span>
+                                <span>Teal</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- ── REMOTE TAKEOVER ── -->
+                    <div class="settings-card" id="remote-section">
+                        <div class="settings-card-header">
+                            <span class="settings-card-icon">🕹️</span>
+                            <h3>Remote Takeover</h3>
+                        </div>
+                        <p class="settings-desc">
+                            Define the shell command used when clicking 🕹 on a kiosk row.<br>
+                            Use <code>{computer_name}</code> or <code>{ip}</code> as a placeholder for the target
+                            station.
+                        </p>
+
+                        <div style="margin-bottom: 12px;">
+                            <label style="font-size:13px; font-weight:600; display:block; margin-bottom:6px;">Quick
+                                Presets</label>
+                            <div style="display: flex; flex-wrap: wrap; gap: 8px;" id="cmd-presets">
+                                <button type="button" class="btn btn-outline preset-btn" data-cmd="mstsc /v:{ip}">🖥 RDP
+                                    (IP)</button>
+                                <button type="button" class="btn btn-outline preset-btn"
+                                    data-cmd="mstsc /v:{computer_name}">🖥 RDP (Hostname)</button>
+                                <button type="button" class="btn btn-outline preset-btn"
+                                    data-cmd="CmRcViewer.exe {ip}">🔧 SCCM Remote (IP)</button>
+                                <button type="button" class="btn btn-outline preset-btn"
+                                    data-cmd="CmRcViewer.exe {computer_name}">🔧 SCCM Remote (Hostname)</button>
+                                <button type="button" class="btn btn-outline preset-btn" data-cmd="ping {ip} -t">📡 Ping
+                                    (IP)</button>
+                            </div>
+                        </div>
+
+                        <form id="remote-cmd-form">
+                            <div style="display: flex; gap: 10px; align-items: flex-end;">
+                                <div style="flex:1;">
+                                    <label
+                                        style="font-size:13px; font-weight:600; display:block; margin-bottom:6px;">Command</label>
+                                    <input type="text" id="remote-cmd-input"
+                                        placeholder="CmRcViewer.exe {computer_name}"
+                                        style="width:100%; padding: 10px; border-radius: 5px; background: var(--bg-color); color: var(--text-color); border: 1px solid var(--border-color); font-family: monospace; font-size: 14px;">
+                                </div>
+                                <button type="submit" class="btn btn-primary" style="white-space:nowrap;">💾 Save
+                                    Command</button>
+                            </div>
+                            <div id="remote-cmd-saved"
+                                style="display:none; margin-top:8px; color: var(--success); font-size:13px;">✅ Command
+                                saved!</div>
+                        </form>
+                    </div>
+
+                    <!-- ── SYSTEM CONFIGURATION ── -->
+                    <div class="settings-card" id="system-settings-card">
+                        <div class="settings-card-header">
+                            <span class="settings-card-icon">⚙️</span>
+                            <h3>System Configuration</h3>
+                        </div>
+                        <p class="settings-desc">Configure email server (SMTP) and general system settings.</p>
+                        <form id="sysconfig-form">
+                            <div class="form-group row">
+                                <div class="col">
+                                    <label>SMTP Host</label>
+                                    <input type="text" id="fsys-smtp-host" placeholder="smtp.gmail.com">
+                                </div>
+                                <div class="col">
+                                    <label>SMTP Port</label>
+                                    <input type="number" id="fsys-smtp-port" placeholder="587">
+                                </div>
+                                <div class="col" style="display:flex; align-items:flex-end; padding-bottom:10px;">
+                                    <label style="display:flex; align-items:center; cursor:pointer;">
+                                        <input type="checkbox" id="fsys-smtp-secure" style="margin-right:5px;"> Use
+                                        Secure/TLS
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="form-group row">
+                                <div class="col">
+                                    <label>SMTP User (Email)</label>
+                                    <input type="text" id="fsys-smtp-user" placeholder="alert@domain.com">
+                                </div>
+                                <div class="col">
+                                    <label>SMTP Password</label>
+                                    <input type="password" id="fsys-smtp-pass" placeholder="****">
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label>Offline Threshold (Days)</label>
+                                <p style="font-size:11px; margin-top:0; color:#888;">If a kiosk hasn't responded for
+                                    this many days, its Last Sampled date will turn red.</p>
+                                <input type="number" id="fsys-offline-days" required min="1" value="14"
+                                    style="width: 150px;">
+                            </div>
+                            <button type="submit" class="btn btn-primary">Save Config</button>
+                            <span id="sysconfig-saved" style="display:none; margin-left:10px; color:var(--success);">✅
+                                Saved!</span>
+                        </form>
+                    </div>
+
+                    <!-- ── USER MANAGEMENT ── -->
+                    <div class="settings-card" id="users-settings-card">
+                        <div class="settings-card-header">
+                            <span class="settings-card-icon">👥</span>
+                            <h3>User Management</h3>
+                            <button id="add-user-btn" class="btn btn-primary"
+                                style="margin-left: auto; font-size: 13px; padding: 6px 12px;">+ Add User</button>
+                        </div>
+                        <p class="settings-desc">Manage administrators and users across the system.</p>
+
+                        <table class="kiosk-table" style="margin-top:10px;">
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Username</th>
+                                    <th>Role</th>
+                                    <th>Assigned Areas</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="users-table-body">
+                                <!-- Users populated by JS -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Modals (Hidden by default) -->
+
+    <!-- Area Modal -->
+    <div id="area-modal" class="modal">
+        <div class="modal-content">
+            <span class="close-btn" data-modal="area-modal">&times;</span>
+            <h2>Add Area</h2>
+            <form id="area-form">
+                <div class="form-group">
+                    <label>Name</label>
+                    <input type="text" id="area-name" required>
+                </div>
+                <button type="submit" class="btn btn-primary">Save</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Kiosk Modal -->
+    <div id="kiosk-modal" class="modal">
+        <div class="modal-content">
+            <span class="close-btn" data-modal="kiosk-modal">&times;</span>
+            <h2 id="kiosk-modal-title">Add Kiosk</h2>
+            <form id="kiosk-form">
+                <input type="hidden" id="fkiosk-id">
+                <div class="form-group row">
+                    <div class="col">
+                        <label>Computer Name *</label>
+                        <input type="text" id="fkiosk-name" required>
+                    </div>
+                    <div class="col">
+                        <label>IP Address *</label>
+                        <input type="text" id="fkiosk-ip" required>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Description *</label>
+                    <input type="text" id="fkiosk-desc" required>
+                </div>
+                <div class="form-group row">
+                    <div class="col">
+                        <label>Station Manager</label>
+                        <input type="text" id="fkiosk-manager">
+                    </div>
+                    <div class="col">
+                        <label>Manager Email</label>
+                        <input type="email" id="fkiosk-manager-email">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Notes</label>
+                    <input type="text" id="fkiosk-notes">
+                </div>
+                <div class="form-group row">
+                    <div class="col" style="align-items: center; display: flex;">
+                        <input type="checkbox" id="fkiosk-active" checked> <label style="margin-left:5px">Active</label>
+                    </div>
+                    <div class="col" style="align-items: center; display: flex;">
+                        <input type="checkbox" id="fkiosk-alert"> <label style="margin-left:5px"
+                            title="Send email alert if offline on Sunday morning">Receive offline alerts</label>
+                    </div>
+                </div>
+                <button type="submit" class="btn btn-primary">Save Kiosk</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- User Modal -->
+    <div id="user-modal" class="modal">
+        <div class="modal-content">
+            <span class="close-btn" data-modal="user-modal">&times;</span>
+            <h2 id="user-modal-title">Manage User</h2>
+            <form id="user-form">
+                <input type="hidden" id="fuser-id">
+                <div class="form-group">
+                    <label>Username *</label>
+                    <input type="text" id="fuser-name" required>
+                </div>
+                <div class="form-group">
+                    <label>Password (leave blank if unchanged) *</label>
+                    <input type="password" id="fuser-pass">
+                </div>
+                <div class="form-group">
+                    <label>Role</label>
+                    <select id="fuser-role" style="width: 100%; padding: 8px;">
+                        <option value="user">User</option>
+                        <option value="admin">Admin</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Assigned Areas</label>
+                    <div id="fuser-areas"
+                        style="max-height: 150px; overflow-y: auto; border: 1px solid var(--border-color); padding: 10px; background: var(--bg-color);">
+                        <!-- Checkboxes here -->
+                    </div>
+                </div>
+                <button type="submit" class="btn btn-primary">Save User</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Links Modal -->
+    <div id="links-modal" class="modal">
+        <div class="modal-content">
+            <span class="close-btn" data-modal="links-modal">&times;</span>
+            <h2>Manage Links</h2>
+            <p>Kiosk: <span id="link-kiosk-name"></span></p>
+
+            <form id="add-link-form" class="flex-form">
+                <input type="url" id="flink-url" placeholder="https://..." required>
+                <input type="number" id="flink-duration" placeholder="Seconds" required min="1">
+                <button type="submit" class="btn btn-primary">Add Link</button>
+            </form>
+
+            <ul id="kiosk-links-list" class="links-list"></ul>
+        </div>
+    </div>
+
+    <!-- Message Modal -->
+    <div id="msg-modal" class="modal">
+        <div class="modal-content">
+            <span class="close-btn" data-modal="msg-modal">&times;</span>
+            <h2>Send Broadcast Message</h2>
+            <p>Kiosk: <span id="msg-kiosk-name"></span></p>
+
+            <form id="send-msg-form">
+                <div class="form-group">
+                    <label>Message Text</label>
+                    <textarea id="fmsg-text" required></textarea>
+                </div>
+                <div class="form-group">
+                    <label>Duration (Seconds)</label>
+                    <input type="number" id="fmsg-duration" required min="1" value="10">
+                </div>
+                <button type="submit" class="btn btn-primary">Send</button>
+            </form>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+
+</html>

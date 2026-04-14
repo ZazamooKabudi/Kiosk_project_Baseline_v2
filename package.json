@@ -1,0 +1,17 @@
+{
+  "name": "kiosk-server",
+  "version": "1.0.0",
+  "description": "Kiosk Manager Server",
+  "main": "server.js",
+  "dependencies": {
+    "cors": "^2.8.6",
+    "express": "^4.18.2",
+    "node-cron": "^4.2.1",
+    "nodemailer": "^8.0.1",
+    "ping": "^0.4.4",
+    "sqlite3": "^5.0.2"
+  },
+  "scripts": {
+    "start": "node server.js"
+  }
+}

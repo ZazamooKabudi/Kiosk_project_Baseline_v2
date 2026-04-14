@@ -1,0 +1,24 @@
+{
+    "name": "kiosk-server",
+    "version": "1.0.0",
+    "description": "Kiosk Server Console Application",
+    "main": "server.js",
+    "bin": "server.js",
+    "scripts": {
+        "start": "node server.js",
+        "build": "pkg . --targets node18-win-x64 --output KioskServer.exe"
+    },
+    "dependencies": {
+        "express": "^4.18.2",
+        "ping": "^0.4.4",
+        "cors": "^2.8.5"
+    },
+    "devDependencies": {
+        "pkg": "^5.8.1"
+    },
+    "pkg": {
+        "assets": [
+            "public/**/*"
+        ]
+    }
+}
