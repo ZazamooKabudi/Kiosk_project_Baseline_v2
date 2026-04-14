@@ -329,15 +329,20 @@ app.get('/api/info', (req, res) => {
 function sendOfflineAlerts() {
     const offlineThreshold = db.config.offline_days || 14;
     const now = new Date();
+    const todayStr = now.toISOString().split('T')[0]; // "YYYY-MM-DD"
 
+    // Filter kiosks that: are active, have alert enabled, have email,
+    // are offline long enough, AND have NOT already been alerted today.
     const kiosksToAlert = db.kiosks.filter(k => {
-        if (k.is_active && k.alert_offline && k.manager_email) {
-            let lastSuccess = k.last_success_time || k.last_ping_time;
-            if (!lastSuccess) return true; // Never been online
-            const diffDays = Math.floor((now - new Date(lastSuccess)) / (1000 * 60 * 60 * 24));
-            return diffDays >= offlineThreshold;
-        }
-        return false;
+        if (!k.is_active || !k.alert_offline || !k.manager_email) return false;
+
+        // Skip if already sent alert today for this kiosk
+        if (k.last_alert_date === todayStr) return false;
+
+        const lastSuccess = k.last_success_time || k.last_ping_time;
+        if (!lastSuccess) return true; // Never been online → alert
+        const diffDays = Math.floor((now - new Date(lastSuccess)) / (1000 * 60 * 60 * 24));
+        return diffDays >= offlineThreshold;
     });
 
     if (kiosksToAlert.length === 0) return;
@@ -366,30 +371,36 @@ function sendOfflineAlerts() {
     });
 
     kiosksToAlert.forEach(k => {
+        const lastSuccess = k.last_success_time || k.last_ping_time;
+        const offlineSince = lastSuccess
+            ? `מאז ${new Date(lastSuccess).toLocaleDateString('he-IL')}`
+            : 'מעולם לא היה מחובר';
+
         const mailOptions = {
             from: db.config.smtp_user,
             to: k.manager_email,
-            subject: `Alert: Kiosk Offline (${k.computer_name})`,
-            text: `Hello ${k.station_manager || 'Manager'},\n\nYour Kiosk "${k.computer_name}" (IP: ${k.ip}) has been offline for more than ${offlineThreshold} days.\n\nPlease check the station.`
+            subject: `התראה: קיוסק מנותק — ${k.computer_name}`,
+            text: `שלום ${k.station_manager || 'אחראי'},\n\nהקיוסק "${k.computer_name}" (IP: ${k.ip}) מנותק כבר יותר מ-${offlineThreshold} ימים.\nסטטוס: ${offlineSince}.\n\nנא לבדוק את התחנה.\n\n— מערכת Kiosk Manager`
         };
 
-        transporter.sendMail(mailOptions, (error, info) => {
+        transporter.sendMail(mailOptions, (error) => {
             if (error) {
-                console.error("Error sending email to", k.manager_email, error);
+                console.error(`[Alert] שגיאה בשליחה אל ${k.manager_email}:`, error.message);
             } else {
-                console.log("Offline alert email sent to", k.manager_email);
+                // Mark this kiosk as alerted today — prevents duplicate sends
+                k.last_alert_date = todayStr;
+                saveDb();
+                console.log(`[Alert] נשלחה התראה אל ${k.manager_email} עבור קיוסק ${k.computer_name}`);
             }
         });
     });
 }
 
-// Custom simple cron using built-in timers, running check every minute
-// but triggering only on Sunday (getDay() === 0) at 07:00 AM.
+// Run check every minute — triggers daily at 08:00 AM.
 let lastAlertRun = null;
 setInterval(() => {
     const d = new Date();
-    // 0 = Sunday
-    if (d.getDay() === 0 && d.getHours() === 7 && d.getMinutes() === 0) {
+    if (d.getHours() === 8 && d.getMinutes() === 0) {
         const dateStr = d.toISOString().split('T')[0];
         if (lastAlertRun !== dateStr) {
             lastAlertRun = dateStr;
