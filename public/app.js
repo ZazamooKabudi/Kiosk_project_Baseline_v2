@@ -150,6 +150,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ── CONTENT ──────────────────────────────────────────────────
   $('addLinkBtn').onclick = addLink;
+  $('addImageBtn').onclick = addImage;
   $('newLinkUrl').addEventListener('keydown', e => { if (e.key === 'Enter') addLink(); });
 
   // ── MESSAGE ──────────────────────────────────────────────────
@@ -161,6 +162,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // ── SETTINGS ─────────────────────────────────────────────────
   $('saveSmtpBtn').onclick = saveSmtp;
   $('saveAlertsBtn').onclick = saveAlerts;
+  $('saveDbPathBtn').onclick = saveDbPath;
 
   // ── AUTO REFRESH ─────────────────────────────────────────────
   setInterval(async () => {
@@ -173,9 +175,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // ── DATA ─────────────────────────────────────────────────────────
 async function loadAll() {
-  await Promise.all([loadAreas(), loadKiosks()]);
+  await Promise.all([loadAreas(), loadKiosks(), loadServerInfo()]);
   if (S.user.role === 'admin') {
-    await Promise.all([loadUsers(), loadConfig(), loadServerInfo()]);
+    await Promise.all([loadUsers(), loadConfig()]);
   }
 }
 
@@ -195,7 +197,7 @@ async function loadAreas() {
 }
 
 async function loadKiosks() {
-  S.kiosks = await api.get('/api/kiosks');
+  S.kiosks = await api.get(`/api/kiosks?user_id=${S.user.id}`);
 }
 
 async function loadUsers() {
@@ -265,7 +267,7 @@ function renderDashboard() {
     const stTxt  = st === 'Online' ? 'מחובר' : st === 'Offline' ? 'מנותק' : 'לא ידוע';
     const area   = S.areas.find(a => a.id === k.area_id);
     const kioskUrl = S.serverInfo.ip
-      ? `http://${S.serverInfo.ip}:${S.serverInfo.port||3000}/kiosk.html?id=${k.id}`
+      ? `http://${S.serverInfo.ip}:${S.serverInfo.port||5110}/kiosk.html?id=${k.id}`
       : '';
     return `<div class="ks-card ${cls}">
       <div class="ks-name">${h(k.computer_name || k.description || 'קיוסק')}</div>
@@ -380,8 +382,8 @@ async function saveKiosk() {
   }
   const btn = $('saveKioskBtn'); btn.disabled = true;
   try {
-    if (id) { await api.put(`/api/kiosks/${id}`, data); toast('הקיוסק עודכן'); }
-    else     { await api.post('/api/kiosks', data);     toast('הקיוסק נוסף'); }
+    if (id) { await api.put(`/api/kiosks/${id}`, { ...data, user_id: S.user.id }); toast('הקיוסק עודכן'); }
+    else     { await api.post('/api/kiosks', { ...data, user_id: S.user.id });     toast('הקיוסק נוסף'); }
     closeModal('kioskModal');
     await loadKiosks(); await loadAreas();
     renderKiosks();
@@ -394,7 +396,7 @@ function deleteKiosk(id) {
   const k = S.kiosks.find(k => k.id === id); if (!k) return;
   confirm2(`למחוק את הקיוסק "${k.computer_name || k.description}"?`, async () => {
     try {
-      await api.del(`/api/kiosks/${id}`);
+      await api.del(`/api/kiosks/${id}?user_id=${S.user.id}`);
       toast('הקיוסק נמחק');
       await loadKiosks();
       renderKiosks();
@@ -493,16 +495,20 @@ async function renderLinks(kioskId) {
   const list = $('linksList');
   list.innerHTML = '<div class="loading-placeholder">טוען...</div>';
   try {
-    const links = await api.get(`/api/kiosks/${kioskId}/links`);
+    const links = await api.get(`/api/kiosks/${kioskId}/links?user_id=${S.user.id}`);
     if (!links.length) {
       list.innerHTML = '<div class="loading-placeholder">אין קישורים — הוסף קישור ראשון</div>';
       return;
     }
-    list.innerHTML = links.map(l => `<div class="link-row">
-      <div style="min-width:0">
-        <div class="link-url" title="${h(l.url)}">${h(l.url)}</div>
+    list.innerHTML = links.map(l => `<div class="link-row" data-link-id="${l.id}">
+      ${l.type === 'image' ? `<img src="${h(l.url)}" style="width:48px;height:36px;object-fit:cover;border-radius:4px;flex-shrink:0;border:1px solid var(--bd)">` : ''}
+      <div style="min-width:0;flex:1">
+        <div class="link-url" title="${h(l.url)}">${l.type === 'image' ? '🖼 ' + h(l.url.split('/').pop()) : h(l.url)}</div>
         <div class="link-dur">${l.duration_seconds} שניות הצגה</div>
       </div>
+      <button class="icon-btn" onclick="editLink(${l.id},${kioskId},'${l.type||'url'}','${h(l.url)}',${l.duration_seconds})" title="ערוך">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" width="12" height="12"><path d="M11 2l3 3-8 8H3v-3l8-8z"/></svg>
+      </button>
       <button class="icon-btn del" onclick="deleteLink(${l.id},${kioskId})" title="מחק">
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" width="12" height="12"><path d="M2 4h12M5 4V2h6v2M6 7v5M10 7v5M3 4l1 10h8l1-10"/></svg>
       </button>
@@ -516,7 +522,7 @@ async function addLink() {
   if (!url || !S.selectedKiosk) { toast('נא להכניס URL', 'error'); return; }
   const btn = $('addLinkBtn'); btn.disabled = true;
   try {
-    await api.post(`/api/kiosks/${S.selectedKiosk}/links`, { url, duration_seconds: dur });
+    await api.post(`/api/kiosks/${S.selectedKiosk}/links`, { url, duration_seconds: dur, user_id: S.user.id });
     $('newLinkUrl').value = '';
     toast('הקישור נוסף');
     await renderLinks(S.selectedKiosk);
@@ -524,13 +530,62 @@ async function addLink() {
   finally   { btn.disabled = false; }
 }
 
+async function addImage() {
+  const fileInput = $('newLinkImage');
+  const dur = parseInt($('newImageDuration').value) || 30;
+  if (!fileInput.files[0] || !S.selectedKiosk) { toast('נא לבחור תמונה', 'error'); return; }
+  const btn = $('addImageBtn'); btn.disabled = true;
+  try {
+    const fd = new FormData();
+    fd.append('image', fileInput.files[0]);
+    fd.append('duration_seconds', dur);
+    if (S.user && S.user.id) fd.append('user_id', S.user.id);
+    const res = await fetch(`/api/kiosks/${S.selectedKiosk}/links/image`, { method: 'POST', body: fd });
+    if (!res.ok) { const d = await res.json(); throw new Error(d.error || res.statusText); }
+    fileInput.value = '';
+    toast('התמונה נוספה');
+    await renderLinks(S.selectedKiosk);
+  } catch (e) { toast(e.message || 'שגיאה', 'error'); }
+  finally { btn.disabled = false; }
+}
+
 async function deleteLink(linkId, kioskId) {
   try {
-    await api.del(`/api/links/${linkId}`);
+    await api.del(`/api/links/${linkId}?user_id=${S.user.id}`);
     toast('הקישור נמחק');
     await renderLinks(kioskId);
   } catch { toast('שגיאה', 'error'); }
 }
+
+window.editLink = function(linkId, kioskId, type, currentUrl, currentDur) {
+  const row = document.querySelector(`.link-row[data-link-id="${linkId}"]`);
+  if (!row) return;
+  const urlField = type !== 'image'
+    ? `<input type="url" id="edit-url-${linkId}" class="form-input" value="${currentUrl}" dir="ltr" style="flex:1;font-size:13px">`
+    : `<span class="link-url" style="flex:1" title="${currentUrl}">🖼 ${currentUrl.split('/').pop()}</span>`;
+  row.innerHTML = `
+    <div style="flex:1;display:flex;gap:6px;align-items:center;min-width:0">
+      ${urlField}
+      <input type="number" id="edit-dur-${linkId}" class="form-input" value="${currentDur}" min="1" style="width:72px;font-size:13px" title="שניות הצגה">
+      <span style="font-size:12px;color:var(--tm);white-space:nowrap">שניות</span>
+    </div>
+    <button class="btn btn-primary btn-sm" onclick="saveLink(${linkId},${kioskId},'${type}')">שמור</button>
+    <button class="btn btn-sm" onclick="renderLinks(${kioskId})">ביטול</button>
+  `;
+};
+
+window.saveLink = async function(linkId, kioskId, type) {
+  const urlEl = $(`edit-url-${linkId}`);
+  const durEl = $(`edit-dur-${linkId}`);
+  const url = urlEl ? urlEl.value.trim() : null;
+  const dur = parseInt(durEl.value) || 30;
+  if (type !== 'image' && !url) { toast('נא להכניס URL', 'error'); return; }
+  try {
+    await api.put(`/api/links/${linkId}`, { url, duration_seconds: dur, user_id: S.user.id });
+    toast('הקישור עודכן');
+    await renderLinks(kioskId);
+  } catch { toast('שגיאה', 'error'); }
+};
 
 // ── MESSAGES ─────────────────────────────────────────────────────
 function renderMessages() {
@@ -553,7 +608,7 @@ async function sendMessage() {
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span> שולח...';
   try {
-    await api.post('/api/messages', { kiosk_id: kioskId, message, duration_seconds: dur });
+    await api.post('/api/messages', { kiosk_id: kioskId, message, duration_seconds: dur, user_id: S.user.id });
     $('msgText').value = '';
     toast('ההודעה נשלחה בהצלחה');
   } catch { toast('שגיאה בשליחה', 'error'); }
@@ -653,7 +708,7 @@ function deleteUser(id) {
 }
 
 // ── SETTINGS ────────────────────────────────────────────────────
-function renderSettings() {
+async function renderSettings() {
   const c = S.config || {};
   $('smtpHost').value     = c.smtp_host  || '';
   $('smtpPort').value     = c.smtp_port  || 587;
@@ -663,9 +718,15 @@ function renderSettings() {
   $('offlineDays').value  = c.offline_days || 14;
 
   if (S.serverInfo.ip) {
-    $('serverIp').textContent = `${S.serverInfo.ip}:${S.serverInfo.port||3000}`;
-    $('kioskUrlTemplate').value = `http://${S.serverInfo.ip}:${S.serverInfo.port||3000}/kiosk.html?id=<ID>`;
+    $('serverIp').textContent = `${S.serverInfo.ip}:${S.serverInfo.port||5110}`;
+    $('kioskUrlTemplate').value = `http://${S.serverInfo.ip}:${S.serverInfo.port||5110}/kiosk.html?id=<ID>`;
   }
+
+  try {
+    const sv = await api.get('/api/settings');
+    $('dbPath').value = sv.db_path || '';
+    $('dbCurrentPath').textContent = `נתיב פעיל כעת: ${sv.current_db_path || sv.db_path || '—'}`;
+  } catch {}
 }
 
 async function saveSmtp() {
@@ -692,12 +753,29 @@ async function saveAlerts() {
   finally   { btn.disabled = false; }
 }
 
+async function saveDbPath() {
+  const newPath = $('dbPath').value.trim();
+  if (!newPath) { toast('נא להכניס נתיב', 'error'); return; }
+  const btn = $('saveDbPathBtn'); btn.disabled = true;
+  try {
+    await api.post('/api/settings', { db_path: newPath });
+    toast('הנתיב נשמר — יש להפעיל מחדש את השרת להחלת השינוי', 'info');
+    const sv = await api.get('/api/settings');
+    $('dbCurrentPath').textContent = `נתיב פעיל כעת: ${sv.current_db_path || sv.db_path || '—'}`;
+  } catch { toast('שגיאה בשמירה', 'error'); }
+  finally   { btn.disabled = false; }
+}
+
 // ── HELPERS ──────────────────────────────────────────────────────
 function copyText(text) {
-  navigator.clipboard.writeText(text).then(
-    () => toast('הועתק ללוח'),
-    () => { prompt('העתק את הקישור:', text); }
-  );
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(text).then(
+      () => toast('הועתק ללוח'),
+      () => { prompt('העתק את הקישור:', text); }
+    );
+  } else {
+    prompt('העתק את הקישור:', text);
+  }
 }
 
 function copyKioskUrl() {

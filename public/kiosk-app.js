@@ -1,6 +1,7 @@
 // Kiosk Display Logic
 const kioskId = new URLSearchParams(window.location.search).get('id');
 const iframe = document.getElementById('kiosk-iframe');
+const kioskImg = document.getElementById('kiosk-img');
 const noContent = document.getElementById('no-content');
 const msgOverlay = document.getElementById('msg-overlay');
 const msgText = document.getElementById('msg-text');
@@ -78,16 +79,25 @@ function playNext() {
 
   if (!links.length) {
     iframe.style.display = 'none';
+    kioskImg.style.display = 'none';
     noContent.classList.add('show');
     return;
   }
 
   noContent.classList.remove('show');
-  iframe.style.display = 'block';
 
   currentIdx = (currentIdx + 1) % links.length;
   const link = links[currentIdx];
-  iframe.src = link.url;
+
+  if (link.type === 'image') {
+    iframe.style.display = 'none';
+    kioskImg.style.display = 'block';
+    kioskImg.src = link.url;
+  } else {
+    kioskImg.style.display = 'none';
+    iframe.style.display = 'block';
+    iframe.src = link.url;
+  }
 
   startProgress(link.duration_seconds);
 

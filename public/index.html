@@ -518,6 +518,12 @@ body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-
                 <span class="duration-label">שניות</span>
                 <button class="btn btn-primary btn-sm" id="addLinkBtn">הוסף</button>
               </div>
+              <div class="add-link-row" style="border-bottom:1px solid var(--bd)">
+                <input type="file" id="newLinkImage" class="form-input" accept="image/*" style="flex:1;cursor:pointer">
+                <input type="number" id="newImageDuration" class="form-input" value="30" min="5" style="width:80px" title="שניות הצגה">
+                <span class="duration-label">שניות</span>
+                <button class="btn btn-secondary btn-sm" id="addImageBtn">העלה תמונה</button>
+              </div>
               <div id="linksList" style="overflow-y:auto;flex:1"></div>
             </div>
             <div id="contentEmpty" class="content-empty-state">
@@ -553,6 +559,20 @@ body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-
 
       <!-- SETTINGS -->
       <section id="section-settings" class="section">
+        <div class="panel" style="margin-bottom:16px">
+          <div class="panel-header"><h3>נתיב מסד הנתונים (DB)</h3></div>
+          <div class="panel-body">
+            <div style="display:flex;gap:8px;align-items:flex-end">
+              <div class="form-group" style="flex:1;margin:0">
+                <label>נתיב תיקיית ה-DB</label>
+                <input type="text" class="form-input" id="dbPath" dir="ltr" placeholder="C:\SQL_DB\Kiosk_project_Baseline_v2">
+              </div>
+              <button class="btn btn-primary" id="saveDbPathBtn" style="flex-shrink:0">שמור נתיב</button>
+            </div>
+            <p id="dbCurrentPath" style="font-size:12px;color:var(--tm);margin-top:8px"></p>
+            <p style="font-size:12px;color:var(--warn,#f59e0b);margin-top:4px">⚠ שינוי הנתיב ייכנס לתוקף רק לאחר הפעלה מחדש של השרת</p>
+          </div>
+        </div>
         <div class="settings-cols">
           <div class="panel">
             <div class="panel-header"><h3>פרטי שרת</h3></div>

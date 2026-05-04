@@ -5,7 +5,7 @@ const path = require('path');
 const cors = require('cors');
 
 const app = express();
-const port = process.env.PORT || 3000;
+const port = 5190;
 let db = {
     areas: [],
     kiosks: [],
@@ -30,12 +30,12 @@ function loadDb() {
         if (!db.user_areas) db.user_areas = [];
         if (!db.currentIds.users) db.currentIds.users = 1;
 
-        let hasAdmin = db.users.find(u => u.username === 'nivm');
+        let hasAdmin = db.users.find(u => u.username === 'kioskadmin');
         if (!hasAdmin) {
             db.users.push({
                 id: getNextId('users'),
-                username: 'nivm',
-                password: 'qw12!@',
+                username: 'kioskadmin',
+                password: "/'12!@",
                 role: 'admin'
             });
             saveDb();
@@ -73,6 +73,21 @@ app.use((req, res, next) => {
 app.use(express.static(path.join(__dirname, 'public')));
 
 loadDb();
+
+function getAllowedAreaIds(user_id) {
+    const user = db.users.find(u => u.id === user_id);
+    if (!user) return [];
+    if (user.role === 'admin') return null; // null = all areas
+    return db.user_areas.filter(ua => ua.user_id === user_id).map(ua => ua.area_id);
+}
+
+function canAccessKiosk(user_id, kiosk_id) {
+    const areaIds = getAllowedAreaIds(user_id);
+    if (areaIds === null) return true;
+    const kiosk = db.kiosks.find(k => k.id === kiosk_id);
+    if (!kiosk) return false;
+    return areaIds.includes(kiosk.area_id);
+}
 
 async function runPingSweep() {
     let needsSave = false;
@@ -194,13 +209,23 @@ app.delete('/api/areas/:id', (req, res) => {
 
 app.get('/api/kiosks', (req, res) => {
     const area_id = req.query.area_id ? parseInt(req.query.area_id) : null;
+    const user_id = req.query.user_id ? parseInt(req.query.user_id) : null;
     let kiosks = db.kiosks;
     if (area_id) kiosks = kiosks.filter(k => k.area_id === area_id);
+    if (user_id) {
+        const allowed = getAllowedAreaIds(user_id);
+        if (allowed !== null) kiosks = kiosks.filter(k => allowed.includes(k.area_id));
+    }
     res.json(kiosks);
 });
 
 app.post('/api/kiosks', (req, res) => {
-    const { area_id, ip, computer_name, description, station_manager, notes, is_active } = req.body;
+    const { area_id, ip, computer_name, description, station_manager, notes, is_active, user_id } = req.body;
+    if (user_id) {
+        const allowed = getAllowedAreaIds(parseInt(user_id));
+        if (allowed !== null && !allowed.includes(parseInt(area_id)))
+            return res.status(403).json({ error: "Access denied" });
+    }
     const active = is_active !== undefined ? is_active : 1;
     const id = getNextId('kiosks');
 
@@ -215,7 +240,9 @@ app.post('/api/kiosks', (req, res) => {
 
 app.put('/api/kiosks/:id', (req, res) => {
     const id = parseInt(req.params.id);
-    const { area_id, ip, computer_name, description, station_manager, notes, is_active } = req.body;
+    const { area_id, ip, computer_name, description, station_manager, notes, is_active, user_id } = req.body;
+    if (user_id && !canAccessKiosk(parseInt(user_id), id))
+        return res.status(403).json({ error: "Access denied" });
     const idx = db.kiosks.findIndex(k => k.id === id);
 
     if (idx !== -1) {
@@ -229,6 +256,9 @@ app.put('/api/kiosks/:id', (req, res) => {
 
 app.delete('/api/kiosks/:id', (req, res) => {
     const id = parseInt(req.params.id);
+    const user_id = req.query.user_id ? parseInt(req.query.user_id) : null;
+    if (user_id && !canAccessKiosk(user_id, id))
+        return res.status(403).json({ error: "Access denied" });
     db.kiosks = db.kiosks.filter(k => k.id !== id);
     db.kiosk_links = db.kiosk_links.filter(l => l.kiosk_id !== id);
     saveDb();
@@ -237,12 +267,17 @@ app.delete('/api/kiosks/:id', (req, res) => {
 
 app.get('/api/kiosks/:id/links', (req, res) => {
     const id = parseInt(req.params.id);
+    const user_id = req.query.user_id ? parseInt(req.query.user_id) : null;
+    if (user_id && !canAccessKiosk(user_id, id))
+        return res.status(403).json({ error: "Access denied" });
     res.json(db.kiosk_links.filter(l => l.kiosk_id === id));
 });
 
 app.post('/api/kiosks/:id/links', (req, res) => {
     const kiosk_id = parseInt(req.params.id);
-    const { url, duration_seconds } = req.body;
+    const { url, duration_seconds, user_id } = req.body;
+    if (user_id && !canAccessKiosk(parseInt(user_id), kiosk_id))
+        return res.status(403).json({ error: "Access denied" });
     const id = getNextId('kiosk_links');
 
     db.kiosk_links.push({ id, kiosk_id, url, duration_seconds: parseInt(duration_seconds) });
@@ -252,13 +287,21 @@ app.post('/api/kiosks/:id/links', (req, res) => {
 
 app.delete('/api/links/:id', (req, res) => {
     const id = parseInt(req.params.id);
+    const user_id = req.query.user_id ? parseInt(req.query.user_id) : null;
+    if (user_id) {
+        const link = db.kiosk_links.find(l => l.id === id);
+        if (link && !canAccessKiosk(user_id, link.kiosk_id))
+            return res.status(403).json({ error: "Access denied" });
+    }
     db.kiosk_links = db.kiosk_links.filter(l => l.id !== id);
     saveDb();
     res.json({ success: true });
 });
 
 app.post('/api/messages', (req, res) => {
-    const { kiosk_id, message, duration_seconds } = req.body;
+    const { kiosk_id, message, duration_seconds, user_id } = req.body;
+    if (user_id && !canAccessKiosk(parseInt(user_id), parseInt(kiosk_id)))
+        return res.status(403).json({ error: "Access denied" });
     const id = getNextId('messages');
 
     db.messages.push({

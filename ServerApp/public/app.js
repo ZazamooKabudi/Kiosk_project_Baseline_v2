@@ -173,9 +173,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // ── DATA ─────────────────────────────────────────────────────────
 async function loadAll() {
-  await Promise.all([loadAreas(), loadKiosks()]);
+  await Promise.all([loadAreas(), loadKiosks(), loadServerInfo()]);
   if (S.user.role === 'admin') {
-    await Promise.all([loadUsers(), loadConfig(), loadServerInfo()]);
+    await Promise.all([loadUsers(), loadConfig()]);
   }
 }
 
@@ -195,7 +195,7 @@ async function loadAreas() {
 }
 
 async function loadKiosks() {
-  S.kiosks = await api.get('/api/kiosks');
+  S.kiosks = await api.get(`/api/kiosks?user_id=${S.user.id}`);
 }
 
 async function loadUsers() {
@@ -265,7 +265,7 @@ function renderDashboard() {
     const stTxt  = st === 'Online' ? 'מחובר' : st === 'Offline' ? 'מנותק' : 'לא ידוע';
     const area   = S.areas.find(a => a.id === k.area_id);
     const kioskUrl = S.serverInfo.ip
-      ? `http://${S.serverInfo.ip}:${S.serverInfo.port||3000}/kiosk.html?id=${k.id}`
+      ? `http://${S.serverInfo.ip}:${S.serverInfo.port||5110}/kiosk.html?id=${k.id}`
       : '';
     return `<div class="ks-card ${cls}">
       <div class="ks-name">${h(k.computer_name || k.description || 'קיוסק')}</div>
@@ -375,8 +375,8 @@ async function saveKiosk() {
   }
   const btn = $('saveKioskBtn'); btn.disabled = true;
   try {
-    if (id) { await api.put(`/api/kiosks/${id}`, data); toast('הקיוסק עודכן'); }
-    else     { await api.post('/api/kiosks', data);     toast('הקיוסק נוסף'); }
+    if (id) { await api.put(`/api/kiosks/${id}`, { ...data, user_id: S.user.id }); toast('הקיוסק עודכן'); }
+    else     { await api.post('/api/kiosks', { ...data, user_id: S.user.id });     toast('הקיוסק נוסף'); }
     closeModal('kioskModal');
     await loadKiosks(); await loadAreas();
     renderKiosks();
@@ -389,7 +389,7 @@ function deleteKiosk(id) {
   const k = S.kiosks.find(k => k.id === id); if (!k) return;
   confirm2(`למחוק את הקיוסק "${k.computer_name || k.description}"?`, async () => {
     try {
-      await api.del(`/api/kiosks/${id}`);
+      await api.del(`/api/kiosks/${id}?user_id=${S.user.id}`);
       toast('הקיוסק נמחק');
       await loadKiosks();
       renderKiosks();
@@ -488,7 +488,7 @@ async function renderLinks(kioskId) {
   const list = $('linksList');
   list.innerHTML = '<div class="loading-placeholder">טוען...</div>';
   try {
-    const links = await api.get(`/api/kiosks/${kioskId}/links`);
+    const links = await api.get(`/api/kiosks/${kioskId}/links?user_id=${S.user.id}`);
     if (!links.length) {
       list.innerHTML = '<div class="loading-placeholder">אין קישורים — הוסף קישור ראשון</div>';
       return;
@@ -511,7 +511,7 @@ async function addLink() {
   if (!url || !S.selectedKiosk) { toast('נא להכניס URL', 'error'); return; }
   const btn = $('addLinkBtn'); btn.disabled = true;
   try {
-    await api.post(`/api/kiosks/${S.selectedKiosk}/links`, { url, duration_seconds: dur });
+    await api.post(`/api/kiosks/${S.selectedKiosk}/links`, { url, duration_seconds: dur, user_id: S.user.id });
     $('newLinkUrl').value = '';
     toast('הקישור נוסף');
     await renderLinks(S.selectedKiosk);
@@ -521,7 +521,7 @@ async function addLink() {
 
 async function deleteLink(linkId, kioskId) {
   try {
-    await api.del(`/api/links/${linkId}`);
+    await api.del(`/api/links/${linkId}?user_id=${S.user.id}`);
     toast('הקישור נמחק');
     await renderLinks(kioskId);
   } catch { toast('שגיאה', 'error'); }
@@ -548,7 +548,7 @@ async function sendMessage() {
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span> שולח...';
   try {
-    await api.post('/api/messages', { kiosk_id: kioskId, message, duration_seconds: dur });
+    await api.post('/api/messages', { kiosk_id: kioskId, message, duration_seconds: dur, user_id: S.user.id });
     $('msgText').value = '';
     toast('ההודעה נשלחה בהצלחה');
   } catch { toast('שגיאה בשליחה', 'error'); }
@@ -658,8 +658,8 @@ function renderSettings() {
   $('offlineDays').value  = c.offline_days || 14;
 
   if (S.serverInfo.ip) {
-    $('serverIp').textContent = `${S.serverInfo.ip}:${S.serverInfo.port||3000}`;
-    $('kioskUrlTemplate').value = `http://${S.serverInfo.ip}:${S.serverInfo.port||3000}/kiosk.html?id=<ID>`;
+    $('serverIp').textContent = `${S.serverInfo.ip}:${S.serverInfo.port||5110}`;
+    $('kioskUrlTemplate').value = `http://${S.serverInfo.ip}:${S.serverInfo.port||5110}/kiosk.html?id=<ID>`;
   }
 }
 
@@ -689,10 +689,14 @@ async function saveAlerts() {
 
 // ── HELPERS ──────────────────────────────────────────────────────
 function copyText(text) {
-  navigator.clipboard.writeText(text).then(
-    () => toast('הועתק ללוח'),
-    () => { prompt('העתק את הקישור:', text); }
-  );
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(text).then(
+      () => toast('הועתק ללוח'),
+      () => { prompt('העתק את הקישור:', text); }
+    );
+  } else {
+    prompt('העתק את הקישור:', text);
+  }
 }
 
 function copyKioskUrl() {

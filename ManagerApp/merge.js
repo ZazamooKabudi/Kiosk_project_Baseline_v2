@@ -11,7 +11,7 @@ const setupOverlay = `
             <form id="setup-form">
                 <div class="form-group">
                     <label>Server URL</label>
-                    <input type="text" id="server-url-input" placeholder="http://127.0.0.1:3000" required>
+                    <input type="text" id="server-url-input" placeholder="http://127.0.0.1:5190" required>
                 </div>
                 <button type="submit" class="btn btn-primary" style="width: 100%;">Connect</button>
                 <div id="setup-error" style="color: var(--danger); margin-top: 10px; display: none; text-align: center;">Connection failed</div>

@@ -1,30 +1,12 @@
-# Dependencies
 node_modules/
-PlayerApp/node_modules/
-ServerApp/node_modules/
-ManagerApp/node_modules/
-
-# Build output
+*.db
+*.db-shm
+*.db-wal
+uploads/
+settings.json
+.env
+*.log
 PlayerApp/dist/
-ServerApp/dist/
-
-# Compiled executables
 *.exe
-
-# Database (local data — don't share)
 kiosk_db.json
 ServerApp/kiosk_db.json
-
-# Backups created by scripts
-*.bak
-
-# Logs
-*.log
-npm-debug.log*
-
-# OS files
-.DS_Store
-Thumbs.db
-
-# Environment
-.env

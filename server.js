@@ -1,402 +1,578 @@
 const express = require('express');
 const ping = require('ping');
-const fs = require('fs');
 const path = require('path');
+const fs = require('fs');
 const cors = require('cors');
+const sqlite3 = require('sqlite3').verbose();
+const multer = require('multer');
+const bcrypt = require('bcryptjs');
+const SALT_ROUNDS = 12;
 
 const app = express();
-const port = process.env.PORT || 5190;
-let db = {
-    areas: [],
-    kiosks: [],
-    kiosk_links: [],
-    messages: [],
-    users: [],
-    user_areas: [],
-    config: { offline_days: 14 },
-    currentIds: { areas: 1, kiosks: 1, kiosk_links: 1, messages: 1, users: 1 }
-};
+const PORT = 5190;
 
-// Use current directory for portable DB
-const dbPath = path.join(process.cwd(), 'kiosk_db.json');
+const uploadsDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
 
-function loadDb() {
-    try {
-        if (fs.existsSync(dbPath)) {
-            const data = fs.readFileSync(dbPath, 'utf8');
-            db = Object.assign(db, JSON.parse(data));
+const upload = multer({
+    storage: multer.diskStorage({
+        destination: (req, file, cb) => cb(null, uploadsDir),
+        filename: (req, file, cb) => {
+            const ext = path.extname(file.originalname).toLowerCase();
+            cb(null, `${Date.now()}-${req.params.id}${ext}`);
         }
+    }),
+    limits: { fileSize: 20 * 1024 * 1024 },
+    fileFilter: (req, file, cb) => {
+        const allowed = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg'];
+        cb(null, allowed.includes(path.extname(file.originalname).toLowerCase()));
+    }
+});
 
-        if (!db.users) db.users = [];
-        if (!db.user_areas) db.user_areas = [];
-        if (!db.currentIds.users) db.currentIds.users = 1;
-        if (!db.config) db.config = { offline_days: 14 };
+const DEFAULT_DB_DIR = 'C:\\SQL_DB\\Kiosk_project_Baseline_v2';
+const settingsPath = path.join(__dirname, 'settings.json');
 
-        let hasAdmin = db.users.find(u => u.username === 'nivm');
-        if (!hasAdmin) {
-            db.users.push({
-                id: getNextId('users'),
-                username: 'nivm',
-                password: 'qw12!@',
-                role: 'admin'
-            });
-            saveDb();
-        }
-    } catch (e) {
-        console.error("Failed to load DB:", e);
+function loadSettings() {
+    try { return JSON.parse(fs.readFileSync(settingsPath, 'utf8')); } catch { return {}; }
+}
+
+function ensureSettings() {
+    if (!fs.existsSync(settingsPath)) {
+        fs.writeFileSync(settingsPath, JSON.stringify({ db_path: DEFAULT_DB_DIR }, null, 2), 'utf8');
     }
 }
 
-function saveDb() {
-    try {
-        fs.writeFileSync(dbPath, JSON.stringify(db, null, 2), 'utf8');
-    } catch (e) {
-        console.error("Failed to save DB:", e);
+ensureSettings();
+const settings = loadSettings();
+const dbDir = process.env.DB_PATH || settings.db_path || DEFAULT_DB_DIR;
+if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
+
+const dbPath = path.join(dbDir, 'kiosk.db');
+const db = new sqlite3.Database(dbPath);
+
+// Promise helpers
+function run(sql, params = []) {
+    return new Promise((res, rej) => db.run(sql, params, function (err) { err ? rej(err) : res(this); }));
+}
+function get(sql, params = []) {
+    return new Promise((res, rej) => db.get(sql, params, (err, row) => err ? rej(err) : res(row)));
+}
+function all(sql, params = []) {
+    return new Promise((res, rej) => db.all(sql, params, (err, rows) => err ? rej(err) : res(rows || [])));
+}
+
+async function initDb() {
+    await new Promise((res, rej) => db.exec(`
+        PRAGMA journal_mode = WAL;
+        PRAGMA foreign_keys = ON;
+
+        CREATE TABLE IF NOT EXISTS areas (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password TEXT NOT NULL,
+            role TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS user_areas (
+            user_id INTEGER NOT NULL,
+            area_id INTEGER NOT NULL,
+            PRIMARY KEY (user_id, area_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS kiosks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            area_id INTEGER NOT NULL,
+            ip TEXT,
+            computer_name TEXT,
+            description TEXT,
+            station_manager TEXT,
+            manager_email TEXT,
+            notes TEXT,
+            is_active INTEGER DEFAULT 1,
+            alert_offline INTEGER DEFAULT 0,
+            last_ping_status TEXT,
+            last_ping_time TEXT,
+            last_success_time TEXT,
+            last_seen_time TEXT,
+            last_alert_date TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS kiosk_links (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            kiosk_id INTEGER NOT NULL,
+            url TEXT NOT NULL,
+            duration_seconds INTEGER NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            kiosk_id INTEGER NOT NULL,
+            message TEXT NOT NULL,
+            duration_seconds INTEGER NOT NULL,
+            created_at TEXT NOT NULL,
+            is_displayed INTEGER DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS config (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        );
+    `, err => err ? rej(err) : res()));
+
+    await run("INSERT OR IGNORE INTO config (key, value) VALUES ('offline_days', '14')");
+    const admin = await get("SELECT id FROM users WHERE username = 'kioskadmin'");
+    if (!admin) {
+        const hashed = await bcrypt.hash('qw12!@', SALT_ROUNDS);
+        await run("INSERT INTO users (username, password, role) VALUES (?, ?, ?)", ['kioskadmin', hashed, 'admin']);
     }
 }
 
-function getNextId(table) {
-    if (!db.currentIds[table]) db.currentIds[table] = 1;
-    const id = db.currentIds[table]++;
-    saveDb();
-    return id;
+async function getConfig() {
+    const rows = await all('SELECT key, value FROM config');
+    const cfg = {};
+    for (const row of rows) {
+        const num = Number(row.value);
+        cfg[row.key] = row.value !== '' && !isNaN(num) ? num : row.value;
+    }
+    return cfg;
 }
 
-app.use(express.json());
-app.use(cors()); // Allow connecting from Electron clients
+async function getAllowedAreaIds(user_id) {
+    const user = await get('SELECT role FROM users WHERE id = ?', [user_id]);
+    if (!user) return [];
+    if (user.role === 'admin') return null;
+    const rows = await all('SELECT area_id FROM user_areas WHERE user_id = ?', [user_id]);
+    return rows.map(r => r.area_id);
+}
 
-// Serve public files correctly (kiosk display)
-app.use(express.static(path.join(__dirname, 'public')));
-
-loadDb();
+async function canAccessKiosk(user_id, kiosk_id) {
+    const areaIds = await getAllowedAreaIds(user_id);
+    if (areaIds === null) return true;
+    const kiosk = await get('SELECT area_id FROM kiosks WHERE id = ?', [kiosk_id]);
+    if (!kiosk) return false;
+    return areaIds.includes(kiosk.area_id);
+}
 
 async function runPingSweep() {
-    let needsSave = false;
-    await Promise.all(db.kiosks.map(async (kiosk) => {
-        if (kiosk.is_active === 1 && kiosk.ip) {
-            let isAlive = { alive: false };
-            try {
-                isAlive = await ping.promise.probe(kiosk.ip, {
-                    timeout: 2,
-                    extra: ['-n', '1']
-                });
-            } catch (e) {
-                console.error("Ping error on", kiosk.ip, e);
-            }
-            let status = isAlive.alive ? 'Online' : 'Offline';
-            let time = new Date().toISOString();
-
-            if (isAlive.alive) {
-                kiosk.last_success_time = time;
-            }
-
-            if (kiosk.last_ping_status !== status || kiosk.last_ping_time !== time) {
-                kiosk.last_ping_status = status;
-                kiosk.last_ping_time = time;
-                needsSave = true;
-            }
+    const kiosks = await all("SELECT * FROM kiosks WHERE is_active = 1 AND ip IS NOT NULL AND ip != ''");
+    await Promise.all(kiosks.map(async (kiosk) => {
+        let isAlive = { alive: false };
+        try {
+            isAlive = await ping.promise.probe(kiosk.ip, { timeout: 2, extra: ['-n', '1'] });
+        } catch (e) {
+            console.error("Ping error on", kiosk.ip, e);
+        }
+        const status = isAlive.alive ? 'Online' : 'Offline';
+        const time = new Date().toISOString();
+        if (isAlive.alive) {
+            await run('UPDATE kiosks SET last_ping_status = ?, last_ping_time = ?, last_success_time = ? WHERE id = ?',
+                [status, time, time, kiosk.id]);
+        } else {
+            await run('UPDATE kiosks SET last_ping_status = ?, last_ping_time = ? WHERE id = ?',
+                [status, time, kiosk.id]);
         }
     }));
-    if (needsSave) saveDb();
 }
 
 setInterval(runPingSweep, 10 * 60 * 1000);
 
-// CONFIG ROUTES
-app.get('/api/config', (req, res) => {
-    res.json(db.config);
+app.use(express.json());
+app.use(cors());
+app.use('/uploads', express.static(uploadsDir));
+app.use(express.static(path.join(__dirname, 'public')));
+
+// SETTINGS (settings.json)
+app.get('/api/settings', (req, res) => {
+    res.json({ ...loadSettings(), current_db_path: dbPath });
 });
 
-app.post('/api/config', (req, res) => {
-    db.config = { ...db.config, ...req.body };
-    saveDb();
-    res.json({ success: true });
-});
-
-app.post('/api/ping-all', async (req, res) => {
-    await runPingSweep();
-    res.json({ success: true });
-});
-
-app.post('/api/login', (req, res) => {
-    const { username, password } = req.body;
-    const user = db.users.find(u => u.username === username && u.password === password);
-    if (user) {
-        res.json({ id: user.id, username: user.username, role: user.role });
-    } else {
-        res.status(401).json({ error: "Invalid credentials" });
-    }
-});
-
-app.get('/api/users', (req, res) => {
-    const users = db.users.map(u => ({ id: u.id, username: u.username, role: u.role }));
-    res.json({ users, user_areas: db.user_areas });
-});
-
-app.post('/api/users', (req, res) => {
-    const { username, password, role, areas } = req.body;
-    if (db.users.find(u => u.username === username)) {
-        return res.status(400).json({ error: "Username exists" });
-    }
-    const id = getNextId('users');
-    db.users.push({ id, username, password, role });
-
-    if (areas && Array.isArray(areas)) {
-        areas.forEach(area_id => {
-            db.user_areas.push({ user_id: id, area_id: parseInt(area_id) });
-        });
-    }
-    saveDb();
-    res.json({ id });
-});
-
-app.put('/api/users/:id', (req, res) => {
-    const id = parseInt(req.params.id);
-    const { password, areas } = req.body;
-    const user = db.users.find(u => u.id === id);
-    if (user) {
-        if (password) user.password = password;
-        if (areas !== undefined) {
-            db.user_areas = db.user_areas.filter(ua => ua.user_id !== id);
-            areas.forEach(area_id => {
-                db.user_areas.push({ user_id: id, area_id: parseInt(area_id) });
-            });
+app.post('/api/settings', (req, res) => {
+    try {
+        const current = loadSettings();
+        const updated = { ...current };
+        if (req.body.db_path !== undefined) {
+            updated.db_path = req.body.db_path;
+            try { fs.mkdirSync(req.body.db_path, { recursive: true }); } catch {}
         }
-        saveDb();
+        fs.writeFileSync(settingsPath, JSON.stringify(updated, null, 2), 'utf8');
         res.json({ success: true });
-    } else {
-        res.status(404).json({ error: "Not found" });
-    }
+    } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.delete('/api/users/:id', (req, res) => {
-    const id = parseInt(req.params.id);
-    db.users = db.users.filter(u => u.id !== id);
-    db.user_areas = db.user_areas.filter(ua => ua.user_id !== id);
-    saveDb();
-    res.json({ success: true });
+// CONFIG
+app.get('/api/config', async (req, res) => {
+    try { res.json(await getConfig()); } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.get('/api/areas', (req, res) => {
-    const user_id = req.query.user_id ? parseInt(req.query.user_id) : null;
-    if (!user_id) return res.json(db.areas);
-
-    const user = db.users.find(u => u.id === user_id);
-    if (!user) return res.status(401).json({ error: "User not found" });
-
-    if (user.role === 'admin') {
-        res.json(db.areas);
-    } else {
-        const allowedAreas = db.user_areas.filter(ua => ua.user_id === user_id).map(ua => ua.area_id);
-        res.json(db.areas.filter(a => allowedAreas.includes(a.id)));
-    }
-});
-
-app.post('/api/areas', (req, res) => {
-    const { name } = req.body;
-    const id = getNextId('areas');
-    db.areas.push({ id, name });
-    saveDb();
-    res.json({ id, name });
-});
-
-app.delete('/api/areas/:id', (req, res) => {
-    const id = parseInt(req.params.id);
-    db.areas = db.areas.filter(a => a.id !== id);
-    db.kiosks = db.kiosks.filter(k => k.area_id !== id);
-    db.user_areas = db.user_areas.filter(ua => ua.area_id !== id);
-    saveDb();
-    res.json({ success: true });
-});
-
-app.get('/api/kiosks', (req, res) => {
-    const area_id = req.query.area_id ? parseInt(req.query.area_id) : null;
-    let kiosks = db.kiosks;
-    if (area_id) kiosks = kiosks.filter(k => k.area_id === area_id);
-    res.json(kiosks);
-});
-
-app.post('/api/kiosks', (req, res) => {
-    const { area_id, ip, computer_name, description, station_manager, manager_email, notes, is_active, alert_offline } = req.body;
-    const active = is_active !== undefined ? is_active : 1;
-    const alertOff = alert_offline !== undefined ? alert_offline : 0;
-    const id = getNextId('kiosks');
-
-    db.kiosks.push({
-        id, area_id: parseInt(area_id), ip, computer_name, description,
-        station_manager, manager_email, notes, is_active: active, alert_offline: alertOff,
-        last_ping_status: null, last_ping_time: null, last_success_time: null
-    });
-    saveDb();
-    res.json({ id });
-});
-
-app.put('/api/kiosks/:id', (req, res) => {
-    const id = parseInt(req.params.id);
-    const { area_id, ip, computer_name, description, station_manager, manager_email, notes, is_active, alert_offline } = req.body;
-    const idx = db.kiosks.findIndex(k => k.id === id);
-
-    if (idx !== -1) {
-        db.kiosks[idx] = { ...db.kiosks[idx], area_id: parseInt(area_id), ip, computer_name, description, station_manager, manager_email, notes, is_active, alert_offline };
-        saveDb();
+app.post('/api/config', async (req, res) => {
+    try {
+        for (const [key, value] of Object.entries(req.body))
+            await run('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)', [key, String(value)]);
         res.json({ success: true });
-    } else {
-        res.status(404).json({ error: "Kiosk not found" });
-    }
+    } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.delete('/api/kiosks/:id', (req, res) => {
-    const id = parseInt(req.params.id);
-    db.kiosks = db.kiosks.filter(k => k.id !== id);
-    db.kiosk_links = db.kiosk_links.filter(l => l.kiosk_id !== id);
-    saveDb();
-    res.json({ success: true });
+// PING
+app.post('/api/ping-all', async (req, res) => {
+    try { await runPingSweep(); res.json({ success: true }); }
+    catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.get('/api/kiosks/:id/links', (req, res) => {
-    const id = parseInt(req.params.id);
-    res.json(db.kiosk_links.filter(l => l.kiosk_id === id));
+// LOGIN
+app.post('/api/login', async (req, res) => {
+    try {
+        const { username, password } = req.body;
+        const user = await get('SELECT * FROM users WHERE username = ?', [username]);
+        if (user && await bcrypt.compare(password, user.password))
+            res.json({ id: user.id, username: user.username, role: user.role });
+        else res.status(401).json({ error: "Invalid credentials" });
+    } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.post('/api/kiosks/:id/links', (req, res) => {
-    const kiosk_id = parseInt(req.params.id);
-    const { url, duration_seconds } = req.body;
-    const id = getNextId('kiosk_links');
-
-    db.kiosk_links.push({ id, kiosk_id, url, duration_seconds: parseInt(duration_seconds) });
-    saveDb();
-    res.json({ id });
+// USERS
+app.get('/api/users', async (req, res) => {
+    try {
+        const users = await all('SELECT id, username, role FROM users');
+        const user_areas = await all('SELECT * FROM user_areas');
+        res.json({ users, user_areas });
+    } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.delete('/api/links/:id', (req, res) => {
-    const id = parseInt(req.params.id);
-    db.kiosk_links = db.kiosk_links.filter(l => l.id !== id);
-    saveDb();
-    res.json({ success: true });
+app.post('/api/users', async (req, res) => {
+    try {
+        const { username, password, role, areas } = req.body;
+        if (await get('SELECT id FROM users WHERE username = ?', [username]))
+            return res.status(400).json({ error: "Username exists" });
+        const hashed = await bcrypt.hash(password, SALT_ROUNDS);
+        const result = await run('INSERT INTO users (username, password, role) VALUES (?, ?, ?)', [username, hashed, role]);
+        const id = result.lastID;
+        if (areas && Array.isArray(areas))
+            for (const area_id of areas)
+                await run('INSERT OR IGNORE INTO user_areas (user_id, area_id) VALUES (?, ?)', [id, parseInt(area_id)]);
+        res.json({ id });
+    } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.post('/api/messages', (req, res) => {
-    const { kiosk_id, message, duration_seconds } = req.body;
-    const id = getNextId('messages');
-
-    db.messages.push({
-        id, kiosk_id: parseInt(kiosk_id), message, duration_seconds: parseInt(duration_seconds),
-        created_at: new Date().toISOString(), is_displayed: 0
-    });
-    saveDb();
-    res.json({ id });
+app.put('/api/users/:id', async (req, res) => {
+    try {
+        const id = parseInt(req.params.id);
+        const { password, areas } = req.body;
+        if (!await get('SELECT id FROM users WHERE id = ?', [id]))
+            return res.status(404).json({ error: "Not found" });
+        if (password) {
+            const hashed = await bcrypt.hash(password, SALT_ROUNDS);
+            await run('UPDATE users SET password = ? WHERE id = ?', [hashed, id]);
+        }
+        if (areas !== undefined) {
+            await run('DELETE FROM user_areas WHERE user_id = ?', [id]);
+            for (const area_id of areas)
+                await run('INSERT OR IGNORE INTO user_areas (user_id, area_id) VALUES (?, ?)', [id, parseInt(area_id)]);
+        }
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.get('/api/kiosk-client/:id', (req, res) => {
-    const kioskId = parseInt(req.params.id);
-    const links = db.kiosk_links.filter(l => l.kiosk_id === kioskId);
+app.delete('/api/users/:id', async (req, res) => {
+    try {
+        const id = parseInt(req.params.id);
+        await run('DELETE FROM users WHERE id = ?', [id]);
+        await run('DELETE FROM user_areas WHERE user_id = ?', [id]);
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
 
-    // Auto-mark kiosk as Online when it polls
-    const kiosk = db.kiosks.find(k => k.id === kioskId);
-    if (kiosk) {
+// AREAS
+app.get('/api/areas', async (req, res) => {
+    try {
+        const user_id = req.query.user_id ? parseInt(req.query.user_id) : null;
+        if (!user_id) return res.json(await all('SELECT * FROM areas'));
+
+        const user = await get('SELECT role FROM users WHERE id = ?', [user_id]);
+        if (!user) return res.status(401).json({ error: "User not found" });
+
+        if (user.role === 'admin') {
+            res.json(await all('SELECT * FROM areas'));
+        } else {
+            const allowed = (await all('SELECT area_id FROM user_areas WHERE user_id = ?', [user_id])).map(r => r.area_id);
+            if (allowed.length === 0) return res.json([]);
+            const placeholders = allowed.map(() => '?').join(',');
+            res.json(await all(`SELECT * FROM areas WHERE id IN (${placeholders})`, allowed));
+        }
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/areas', async (req, res) => {
+    try {
+        const { name } = req.body;
+        const result = await run('INSERT INTO areas (name) VALUES (?)', [name]);
+        res.json({ id: result.lastID, name });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/areas/:id', async (req, res) => {
+    try {
+        const id = parseInt(req.params.id);
+        await run('DELETE FROM areas WHERE id = ?', [id]);
+        await run('DELETE FROM kiosks WHERE area_id = ?', [id]);
+        await run('DELETE FROM user_areas WHERE area_id = ?', [id]);
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// KIOSKS
+app.get('/api/kiosks', async (req, res) => {
+    try {
+        const area_id = req.query.area_id ? parseInt(req.query.area_id) : null;
+        const user_id = req.query.user_id ? parseInt(req.query.user_id) : null;
+
+        let query = 'SELECT * FROM kiosks';
+        const params = [];
+        const conditions = [];
+
+        if (area_id) { conditions.push('area_id = ?'); params.push(area_id); }
+
+        if (user_id) {
+            const allowed = await getAllowedAreaIds(user_id);
+            if (allowed !== null) {
+                if (allowed.length === 0) return res.json([]);
+                conditions.push(`area_id IN (${allowed.map(() => '?').join(',')})`);
+                params.push(...allowed);
+            }
+        }
+
+        if (conditions.length) query += ' WHERE ' + conditions.join(' AND ');
+        res.json(await all(query, params));
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/kiosks', async (req, res) => {
+    try {
+        const { area_id, ip, computer_name, description, station_manager, manager_email, notes, is_active, alert_offline, user_id } = req.body;
+        if (user_id) {
+            const allowed = await getAllowedAreaIds(parseInt(user_id));
+            if (allowed !== null && !allowed.includes(parseInt(area_id)))
+                return res.status(403).json({ error: "Access denied" });
+        }
+        const active = is_active !== undefined ? is_active : 1;
+        const alertOff = alert_offline !== undefined ? alert_offline : 0;
+        const result = await run(
+            `INSERT INTO kiosks (area_id, ip, computer_name, description, station_manager, manager_email, notes, is_active, alert_offline)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [parseInt(area_id), ip, computer_name, description, station_manager, manager_email, notes, active, alertOff]
+        );
+        res.json({ id: result.lastID });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.put('/api/kiosks/:id', async (req, res) => {
+    try {
+        const id = parseInt(req.params.id);
+        const { area_id, ip, computer_name, description, station_manager, manager_email, notes, is_active, alert_offline, user_id } = req.body;
+        if (user_id && !await canAccessKiosk(parseInt(user_id), id))
+            return res.status(403).json({ error: "Access denied" });
+        if (!await get('SELECT id FROM kiosks WHERE id = ?', [id]))
+            return res.status(404).json({ error: "Kiosk not found" });
+        await run(
+            `UPDATE kiosks SET area_id = ?, ip = ?, computer_name = ?, description = ?,
+             station_manager = ?, manager_email = ?, notes = ?, is_active = ?, alert_offline = ?
+             WHERE id = ?`,
+            [parseInt(area_id), ip, computer_name, description, station_manager, manager_email, notes, is_active, alert_offline, id]
+        );
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/kiosks/:id', async (req, res) => {
+    try {
+        const id = parseInt(req.params.id);
+        const user_id = req.query.user_id ? parseInt(req.query.user_id) : null;
+        if (user_id && !await canAccessKiosk(user_id, id))
+            return res.status(403).json({ error: "Access denied" });
+        await run('DELETE FROM kiosks WHERE id = ?', [id]);
+        await run('DELETE FROM kiosk_links WHERE kiosk_id = ?', [id]);
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// KIOSK LINKS
+app.get('/api/kiosks/:id/links', async (req, res) => {
+    try {
+        const id = parseInt(req.params.id);
+        const user_id = req.query.user_id ? parseInt(req.query.user_id) : null;
+        if (user_id && !await canAccessKiosk(user_id, id))
+            return res.status(403).json({ error: "Access denied" });
+        res.json(await all('SELECT * FROM kiosk_links WHERE kiosk_id = ?', [id]));
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/kiosks/:id/links', async (req, res) => {
+    try {
+        const kiosk_id = parseInt(req.params.id);
+        const { url, duration_seconds, user_id } = req.body;
+        if (user_id && !await canAccessKiosk(parseInt(user_id), kiosk_id))
+            return res.status(403).json({ error: "Access denied" });
+        const result = await run(
+            'INSERT INTO kiosk_links (kiosk_id, url, duration_seconds) VALUES (?, ?, ?)',
+            [kiosk_id, url, parseInt(duration_seconds)]
+        );
+        res.json({ id: result.lastID });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.put('/api/links/:id', async (req, res) => {
+    try {
+        const id = parseInt(req.params.id);
+        const { url, duration_seconds, user_id } = req.body;
+        const link = await get('SELECT * FROM kiosk_links WHERE id = ?', [id]);
+        if (!link) return res.status(404).json({ error: 'Not found' });
+        if (user_id && !await canAccessKiosk(parseInt(user_id), link.kiosk_id))
+            return res.status(403).json({ error: 'Access denied' });
+        const newUrl = link.type === 'image' ? link.url : (url || link.url);
+        await run(
+            'UPDATE kiosk_links SET url = ?, duration_seconds = ? WHERE id = ?',
+            [newUrl, parseInt(duration_seconds) || link.duration_seconds, id]
+        );
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/kiosks/:id/links/image', upload.single('image'), async (req, res) => {
+    try {
+        const kiosk_id = parseInt(req.params.id);
+        const { duration_seconds, user_id } = req.body;
+        if (!req.file) return res.status(400).json({ error: 'No image uploaded' });
+        if (user_id && !await canAccessKiosk(parseInt(user_id), kiosk_id))
+            return res.status(403).json({ error: "Access denied" });
+        const url = `/uploads/${req.file.filename}`;
+        const result = await run(
+            "INSERT INTO kiosk_links (kiosk_id, url, duration_seconds, type) VALUES (?, ?, ?, 'image')",
+            [kiosk_id, url, parseInt(duration_seconds) || 30]
+        );
+        res.json({ id: result.lastID });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/links/:id', async (req, res) => {
+    try {
+        const id = parseInt(req.params.id);
+        const user_id = req.query.user_id ? parseInt(req.query.user_id) : null;
+        const link = await get('SELECT * FROM kiosk_links WHERE id = ?', [id]);
+        if (user_id && link && !await canAccessKiosk(user_id, link.kiosk_id))
+            return res.status(403).json({ error: "Access denied" });
+        if (link && link.type === 'image' && link.url) {
+            try { fs.unlinkSync(path.join(__dirname, link.url)); } catch {}
+        }
+        await run('DELETE FROM kiosk_links WHERE id = ?', [id]);
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// MESSAGES
+app.post('/api/messages', async (req, res) => {
+    try {
+        const { kiosk_id, message, duration_seconds, user_id } = req.body;
+        if (user_id && !await canAccessKiosk(parseInt(user_id), parseInt(kiosk_id)))
+            return res.status(403).json({ error: "Access denied" });
+        const result = await run(
+            `INSERT INTO messages (kiosk_id, message, duration_seconds, created_at, is_displayed) VALUES (?, ?, ?, ?, 0)`,
+            [parseInt(kiosk_id), message, parseInt(duration_seconds), new Date().toISOString()]
+        );
+        res.json({ id: result.lastID });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// KIOSK CLIENT POLL
+app.get('/api/kiosk-client/:id', async (req, res) => {
+    try {
+        const kioskId = parseInt(req.params.id);
         const now = new Date().toISOString();
-        kiosk.last_seen_time = now;
-        kiosk.last_success_time = now;
-        kiosk.last_ping_status = 'Online';
-        kiosk.last_ping_time = now;
-    }
-
-    const message = db.messages.find(m => m.kiosk_id === kioskId && m.is_displayed === 0);
-    if (message) message.is_displayed = 1;
-
-    if (kiosk || message) saveDb();
-    res.json({ links, message: message || null });
+        await run(
+            `UPDATE kiosks SET last_seen_time = ?, last_success_time = ?, last_ping_status = 'Online', last_ping_time = ? WHERE id = ?`,
+            [now, now, now, kioskId]
+        );
+        const links = await all('SELECT * FROM kiosk_links WHERE kiosk_id = ?', [kioskId]);
+        const message = await get('SELECT * FROM messages WHERE kiosk_id = ? AND is_displayed = 0 LIMIT 1', [kioskId]);
+        if (message) await run('UPDATE messages SET is_displayed = 1 WHERE id = ?', [message.id]);
+        res.json({ links, message: message || null });
+    } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// SERVER INFO
 app.get('/api/info', (req, res) => {
     const { networkInterfaces } = require('os');
     const nets = networkInterfaces();
     let localIp = '127.0.0.1';
-    for (const name of Object.keys(nets)) {
-        for (const net of nets[name]) {
-            if (net.family === 'IPv4' && !net.internal) {
-                localIp = net.address;
-            }
-        }
-    }
-    res.json({ ip: localIp, port });
+    for (const name of Object.keys(nets))
+        for (const net of nets[name])
+            if (net.family === 'IPv4' && !net.internal) localIp = net.address;
+    res.json({ ip: localIp, port: PORT });
 });
 
-// ─────────────────────────────────────────────
-// OFFLINE ALERTS (Mailer & Cron)
-// ─────────────────────────────────────────────
-
-function sendOfflineAlerts() {
-    const offlineThreshold = db.config.offline_days || 14;
+// OFFLINE ALERTS
+async function sendOfflineAlerts() {
+    const cfg = await getConfig();
+    const offlineThreshold = cfg.offline_days || 14;
     const now = new Date();
-    const todayStr = now.toISOString().split('T')[0]; // "YYYY-MM-DD"
+    const todayStr = now.toISOString().split('T')[0];
 
-    // Filter kiosks that: are active, have alert enabled, have email,
-    // are offline long enough, AND have NOT already been alerted today.
-    const kiosksToAlert = db.kiosks.filter(k => {
-        if (!k.is_active || !k.alert_offline || !k.manager_email) return false;
+    const kiosks = await all(`
+        SELECT * FROM kiosks
+        WHERE is_active = 1 AND alert_offline = 1
+        AND manager_email IS NOT NULL AND manager_email != ''
+        AND (last_alert_date IS NULL OR last_alert_date != ?)
+    `, [todayStr]);
 
-        // Skip if already sent alert today for this kiosk
-        if (k.last_alert_date === todayStr) return false;
-
+    const kiosksToAlert = kiosks.filter(k => {
         const lastSuccess = k.last_success_time || k.last_ping_time;
-        if (!lastSuccess) return true; // Never been online → alert
-        const diffDays = Math.floor((now - new Date(lastSuccess)) / (1000 * 60 * 60 * 24));
-        return diffDays >= offlineThreshold;
+        if (!lastSuccess) return true;
+        return Math.floor((now - new Date(lastSuccess)) / (1000 * 60 * 60 * 24)) >= offlineThreshold;
     });
 
     if (kiosksToAlert.length === 0) return;
-
-    if (!db.config.smtp_host || !db.config.smtp_user) {
+    if (!cfg.smtp_host || !cfg.smtp_user) {
         console.warn("Emails not sent: SMTP is not configured in settings.");
         return;
     }
 
     let nodemailer;
-    try {
-        nodemailer = require('nodemailer');
-    } catch (e) {
-        console.error("Nodemailer is not installed. Please run 'npm install nodemailer'.");
-        return;
+    try { nodemailer = require('nodemailer'); } catch (e) {
+        console.error("Nodemailer is not installed. Please run 'npm install nodemailer'."); return;
     }
 
     const transporter = nodemailer.createTransport({
-        host: db.config.smtp_host,
-        port: db.config.smtp_port || 587,
-        secure: db.config.smtp_secure || false,
-        auth: {
-            user: db.config.smtp_user,
-            pass: db.config.smtp_pass
-        }
+        host: cfg.smtp_host,
+        port: cfg.smtp_port || 587,
+        secure: cfg.smtp_secure || false,
+        auth: { user: cfg.smtp_user, pass: cfg.smtp_pass }
     });
 
-    kiosksToAlert.forEach(k => {
+    for (const k of kiosksToAlert) {
         const lastSuccess = k.last_success_time || k.last_ping_time;
         const offlineSince = lastSuccess
             ? `מאז ${new Date(lastSuccess).toLocaleDateString('he-IL')}`
             : 'מעולם לא היה מחובר';
 
-        const mailOptions = {
-            from: db.config.smtp_user,
+        transporter.sendMail({
+            from: cfg.smtp_user,
             to: k.manager_email,
             subject: `התראה: קיוסק מנותק — ${k.computer_name}`,
             text: `שלום ${k.station_manager || 'אחראי'},\n\nהקיוסק "${k.computer_name}" (IP: ${k.ip}) מנותק כבר יותר מ-${offlineThreshold} ימים.\nסטטוס: ${offlineSince}.\n\nנא לבדוק את התחנה.\n\n— מערכת Kiosk Manager`
-        };
-
-        transporter.sendMail(mailOptions, (error) => {
+        }, async (error) => {
             if (error) {
                 console.error(`[Alert] שגיאה בשליחה אל ${k.manager_email}:`, error.message);
             } else {
-                // Mark this kiosk as alerted today — prevents duplicate sends
-                k.last_alert_date = todayStr;
-                saveDb();
+                await run('UPDATE kiosks SET last_alert_date = ? WHERE id = ?', [todayStr, k.id]);
                 console.log(`[Alert] נשלחה התראה אל ${k.manager_email} עבור קיוסק ${k.computer_name}`);
             }
         });
-    });
+    }
 }
 
-// Run check every minute — triggers daily at 08:00 AM.
 let lastAlertRun = null;
 setInterval(() => {
     const d = new Date();
@@ -404,11 +580,28 @@ setInterval(() => {
         const dateStr = d.toISOString().split('T')[0];
         if (lastAlertRun !== dateStr) {
             lastAlertRun = dateStr;
-            sendOfflineAlerts();
+            sendOfflineAlerts().catch(e => console.error("[Alert] Error:", e));
         }
     }
 }, 60 * 1000);
 
-app.listen(port, '0.0.0.0', () => {
-    console.log(`Kiosk Server is running on port ${port}...`);
+async function migratePasswords() {
+    const users = await all('SELECT id, password FROM users');
+    for (const u of users) {
+        if (!u.password.startsWith('$2')) {
+            const hashed = await bcrypt.hash(u.password, SALT_ROUNDS);
+            await run('UPDATE users SET password = ? WHERE id = ?', [hashed, u.id]);
+        }
+    }
+}
+
+initDb().then(async () => {
+    try { await run("ALTER TABLE kiosk_links ADD COLUMN type TEXT DEFAULT 'url'"); } catch {}
+    await migratePasswords();
+    app.listen(PORT, '0.0.0.0', () => {
+        console.log(`Kiosk Server is running on port ${PORT}...`);
+    });
+}).catch(err => {
+    console.error("Failed to initialize database:", err);
+    process.exit(1);
 });

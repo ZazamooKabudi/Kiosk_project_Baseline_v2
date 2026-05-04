@@ -2,7 +2,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const connStatus = document.getElementById("conn-status");
     let currentUser = null;
     let allGlobalAreas = []; // for admin users management
-    let serverInfo = { ip: '127.0.0.1', port: 3000 };
+    let serverInfo = { ip: '127.0.0.1', port: 5110 };
 
     // GUI Elements
     const loginOverlay = document.getElementById("login-overlay");
@@ -449,7 +449,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 <td>${u.role === 'admin' ? 'All Areas (Admin)' : (assignedAreaNames || 'None')}</td>
                 <td>
                     <button class="icon-btn edit-user" data-user='${JSON.stringify({ ...u, assignedAreas: userAreas })}' title="Edit">✎</button>
-                    ${u.username !== 'nivm' ? `<button class="icon-btn warn delete-user" data-id="${u.id}" title="Delete">🗑</button>` : ''}
+                    ${u.username !== 'kioskadmin' ? `<button class="icon-btn warn delete-user" data-id="${u.id}" title="Delete">🗑</button>` : ''}
                 </td>
             `;
             tbody.appendChild(tr);
@@ -469,7 +469,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 const u = JSON.parse(e.target.dataset.user);
                 document.getElementById("fuser-id").value = u.id;
                 document.getElementById("fuser-name").value = u.username;
-                document.getElementById("fuser-name").disabled = (u.username === 'nivm'); // Protect default admin
+                document.getElementById("fuser-name").disabled = (u.username === 'kioskadmin'); // Protect default admin
                 document.getElementById("fuser-pass").value = "";
                 document.getElementById("fuser-pass").required = false;
                 document.getElementById("fuser-role").value = u.role;

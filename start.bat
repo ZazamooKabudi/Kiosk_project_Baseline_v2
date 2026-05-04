@@ -20,11 +20,12 @@ if not exist node_modules (
     echo.
 )
 
-echo Starting server on port 3000...
+echo Starting server on port 5190...
 echo.
-echo Admin interface: http://localhost:3000
-echo Default login:   nivm / (your password)
+echo Admin interface: http://localhost:5190
+echo Default login:   kioskadmin / qw12!@
 echo.
+echo DB path can be changed in: settings.json
 echo Press Ctrl+C to stop the server.
 echo ==========================================
 echo.
