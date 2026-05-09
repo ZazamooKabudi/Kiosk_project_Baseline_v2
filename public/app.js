@@ -171,7 +171,11 @@ document.addEventListener('DOMContentLoaded', () => {
     if (S.currentSection === 'dashboard') renderDashboard();
     if (S.currentSection === 'kiosks') renderKiosks();
   }, 60000);
-});
+  setInterval(async () => {
+    if (!S.user || S.currentSection !== 'dashboard') return;
+    await loadKiosks();
+    renderDashboard();
+  }, 15000);});
 
 // ── DATA ─────────────────────────────────────────────────────────
 async function loadAll() {
@@ -269,11 +273,21 @@ function renderDashboard() {
     const kioskUrl = S.serverInfo.ip
       ? `http://${S.serverInfo.ip}:${S.serverInfo.port||5110}/kiosk.html?id=${k.id}`
       : '';
+    const snapshotInterval = S.config.snapshot_interval_seconds || 10;
+    const snapshotAge = k.last_snapshot_time
+      ? (Date.now() - new Date(k.last_snapshot_time).getTime()) / 1000
+      : Infinity;
+    const kioskInactive = snapshotAge > snapshotInterval * 2.5;
     return `<div class="ks-card ${cls}">
       <div class="ks-name">${h(k.computer_name || k.description || 'קיוסק')}</div>
       <div class="ks-ip">${h(k.ip || '')}</div>
       <div class="ks-status"><span class="dot ${dotCls}"></span>${stTxt}</div>
       ${area ? `<div style="font-size:10px;color:var(--tm);margin-top:4px">${h(area.name)}</div>` : ''}
+      <div class="ks-desc">${h(k.description || 'אין תיאור')}</div>
+      <div class="ks-snapshot">
+        <div class="ks-snapshot-label">${snapshotInterval} שניות האחרונות</div>
+        ${kioskInactive ? '<div class="ks-snapshot-offline">⛔ קיוסק לא פעיל</div>' : k.last_snapshot_url ? `<img src="${h(k.last_snapshot_url)}?t=${Date.now()}">` : '<div class="ks-snapshot-empty">אין תמונת Snapshot</div>'}
+      </div>
       ${kioskUrl ? `<button class="ks-copy" onclick="copyText('${kioskUrl}')">📋 העתק קישור לקיוסק</button>` : ''}
     </div>`;
   }).join('');
@@ -500,19 +514,32 @@ async function renderLinks(kioskId) {
       list.innerHTML = '<div class="loading-placeholder">אין קישורים — הוסף קישור ראשון</div>';
       return;
     }
+    // Build HTML using h() for display only — no user data in event handler strings
     list.innerHTML = links.map(l => `<div class="link-row" data-link-id="${l.id}">
       ${l.type === 'image' ? `<img src="${h(l.url)}" style="width:48px;height:36px;object-fit:cover;border-radius:4px;flex-shrink:0;border:1px solid var(--bd)">` : ''}
       <div style="min-width:0;flex:1">
         <div class="link-url" title="${h(l.url)}">${l.type === 'image' ? '🖼 ' + h(l.url.split('/').pop()) : h(l.url)}</div>
         <div class="link-dur">${l.duration_seconds} שניות הצגה</div>
       </div>
-      <button class="icon-btn" onclick="editLink(${l.id},${kioskId},'${l.type||'url'}','${h(l.url)}',${l.duration_seconds})" title="ערוך">
+      <button class="icon-btn _edit-btn" title="ערוך">
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" width="12" height="12"><path d="M11 2l3 3-8 8H3v-3l8-8z"/></svg>
       </button>
-      <button class="icon-btn del" onclick="deleteLink(${l.id},${kioskId})" title="מחק">
+      <button class="icon-btn del _del-btn" title="מחק">
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" width="12" height="12"><path d="M2 4h12M5 4V2h6v2M6 7v5M10 7v5M3 4l1 10h8l1-10"/></svg>
       </button>
     </div>`).join('');
+
+    // Attach listeners — url/type stored on the JS object, never in HTML attribute
+    links.forEach(l => {
+      const row = list.querySelector(`.link-row[data-link-id="${l.id}"]`);
+      if (!row) return;
+      row.querySelector('._edit-btn').addEventListener('click', () =>
+        editLink(l.id, kioskId, l.type || 'url', l.url, l.duration_seconds)
+      );
+      row.querySelector('._del-btn').addEventListener('click', () =>
+        deleteLink(l.id, kioskId)
+      );
+    });
   } catch { list.innerHTML = '<div class="loading-placeholder">שגיאה בטעינה</div>'; }
 }
 
@@ -560,18 +587,58 @@ async function deleteLink(linkId, kioskId) {
 window.editLink = function(linkId, kioskId, type, currentUrl, currentDur) {
   const row = document.querySelector(`.link-row[data-link-id="${linkId}"]`);
   if (!row) return;
-  const urlField = type !== 'image'
-    ? `<input type="url" id="edit-url-${linkId}" class="form-input" value="${currentUrl}" dir="ltr" style="flex:1;font-size:13px">`
-    : `<span class="link-url" style="flex:1" title="${currentUrl}">🖼 ${currentUrl.split('/').pop()}</span>`;
-  row.innerHTML = `
-    <div style="flex:1;display:flex;gap:6px;align-items:center;min-width:0">
-      ${urlField}
-      <input type="number" id="edit-dur-${linkId}" class="form-input" value="${currentDur}" min="1" style="width:72px;font-size:13px" title="שניות הצגה">
-      <span style="font-size:12px;color:var(--tm);white-space:nowrap">שניות</span>
-    </div>
-    <button class="btn btn-primary btn-sm" onclick="saveLink(${linkId},${kioskId},'${type}')">שמור</button>
-    <button class="btn btn-sm" onclick="renderLinks(${kioskId})">ביטול</button>
-  `;
+
+  // Build edit form via DOM API — currentUrl is never interpolated into HTML strings
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'flex:1;display:flex;gap:6px;align-items:center;min-width:0';
+
+  if (type !== 'image') {
+    const urlInput = document.createElement('input');
+    urlInput.type = 'url';
+    urlInput.id = `edit-url-${linkId}`;
+    urlInput.className = 'form-input';
+    urlInput.value = currentUrl;
+    urlInput.dir = 'ltr';
+    urlInput.style.cssText = 'flex:1;font-size:13px';
+    wrap.appendChild(urlInput);
+  } else {
+    const span = document.createElement('span');
+    span.className = 'link-url';
+    span.style.flex = '1';
+    span.title = currentUrl;
+    span.textContent = '🖼 ' + currentUrl.split('/').pop();
+    wrap.appendChild(span);
+  }
+
+  const durInput = document.createElement('input');
+  durInput.type = 'number';
+  durInput.id = `edit-dur-${linkId}`;
+  durInput.className = 'form-input';
+  durInput.value = currentDur;
+  durInput.min = '1';
+  durInput.style.cssText = 'width:72px;font-size:13px';
+  durInput.title = 'שניות הצגה';
+  wrap.appendChild(durInput);
+
+  const secLabel = document.createElement('span');
+  secLabel.style.cssText = 'font-size:12px;color:var(--tm);white-space:nowrap';
+  secLabel.textContent = 'שניות';
+  wrap.appendChild(secLabel);
+
+  const saveBtn = document.createElement('button');
+  saveBtn.className = 'btn btn-primary btn-sm';
+  saveBtn.textContent = 'שמור';
+  saveBtn.addEventListener('click', () => saveLink(linkId, kioskId, type));
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.className = 'btn btn-sm';
+  cancelBtn.textContent = 'ביטול';
+  cancelBtn.addEventListener('click', () => renderLinks(kioskId));
+
+  row.innerHTML = '';
+  row.appendChild(wrap);
+  row.appendChild(saveBtn);
+  row.appendChild(cancelBtn);
 };
 
 window.saveLink = async function(linkId, kioskId, type) {
@@ -721,6 +788,7 @@ async function renderSettings() {
     $('serverIp').textContent = `${S.serverInfo.ip}:${S.serverInfo.port||5110}`;
     $('kioskUrlTemplate').value = `http://${S.serverInfo.ip}:${S.serverInfo.port||5110}/kiosk.html?id=<ID>`;
   }
+  $('snapshotInterval').value = c.snapshot_interval_seconds || 10;
 
   try {
     const sv = await api.get('/api/settings');
@@ -746,7 +814,10 @@ async function saveSmtp() {
 async function saveAlerts() {
   const btn = $('saveAlertsBtn'); btn.disabled = true;
   try {
-    await api.post('/api/config', { offline_days: +$('offlineDays').value });
+    await api.post('/api/config', {
+      offline_days: +$('offlineDays').value,
+      snapshot_interval_seconds: +$('snapshotInterval').value
+    });
     toast('הגדרות נשמרו');
     await loadConfig();
   } catch { toast('שגיאה', 'error'); }

@@ -99,6 +99,8 @@ async function initDb() {
             last_ping_time TEXT,
             last_success_time TEXT,
             last_seen_time TEXT,
+            last_snapshot_url TEXT,
+            last_snapshot_time TEXT,
             last_alert_date TEXT
         );
 
@@ -125,6 +127,7 @@ async function initDb() {
     `, err => err ? rej(err) : res()));
 
     await run("INSERT OR IGNORE INTO config (key, value) VALUES ('offline_days', '14')");
+    await run("INSERT OR IGNORE INTO config (key, value) VALUES ('snapshot_interval_seconds', '10')");
     const admin = await get("SELECT id FROM users WHERE username = 'kioskadmin'");
     if (!admin) {
         const hashed = await bcrypt.hash('qw12!@', SALT_ROUNDS);
@@ -457,6 +460,51 @@ app.post('/api/kiosks/:id/links/image', upload.single('image'), async (req, res)
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+app.post('/api/kiosks/:id/snapshot', upload.single('snapshot'), async (req, res) => {
+    try {
+        const kiosk_id = parseInt(req.params.id);
+        const user_id = req.body.user_id ? parseInt(req.body.user_id) : null;
+        if (!req.file) return res.status(400).json({ error: 'No snapshot uploaded' });
+        if (user_id && !await canAccessKiosk(user_id, kiosk_id))
+            return res.status(403).json({ error: "Access denied" });
+
+        const kiosk = await get('SELECT last_snapshot_url FROM kiosks WHERE id = ?', [kiosk_id]);
+        if (kiosk && kiosk.last_snapshot_url) {
+            try { fs.unlinkSync(path.join(uploadsDir, path.basename(kiosk.last_snapshot_url))); } catch {}
+        }
+
+        const url = `/uploads/${req.file.filename}`;
+        const time = new Date().toISOString();
+        await run('UPDATE kiosks SET last_snapshot_url = ?, last_snapshot_time = ? WHERE id = ?', [url, time, kiosk_id]);
+        res.json({ success: true, url, time });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/kiosks/:id/snapshot-json', async (req, res) => {
+    try {
+        const kiosk_id = parseInt(req.params.id);
+        const user_id = req.body.user_id ? parseInt(req.body.user_id) : null;
+        const imageBase64 = req.body.image;
+        if (!imageBase64) return res.status(400).json({ error: 'No snapshot image provided' });
+        if (user_id && !await canAccessKiosk(user_id, kiosk_id))
+            return res.status(403).json({ error: "Access denied" });
+
+        const kiosk = await get('SELECT last_snapshot_url FROM kiosks WHERE id = ?', [kiosk_id]);
+        if (kiosk && kiosk.last_snapshot_url) {
+            try { fs.unlinkSync(path.join(uploadsDir, path.basename(kiosk.last_snapshot_url))); } catch {}
+        }
+
+        const filename = `${Date.now()}-${kiosk_id}.jpg`;
+        const destPath = path.join(uploadsDir, filename);
+        fs.writeFileSync(destPath, Buffer.from(imageBase64, 'base64'));
+
+        const url = `/uploads/${filename}`;
+        const time = new Date().toISOString();
+        await run('UPDATE kiosks SET last_snapshot_url = ?, last_snapshot_time = ? WHERE id = ?', [url, time, kiosk_id]);
+        res.json({ success: true, url, time });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.delete('/api/links/:id', async (req, res) => {
     try {
         const id = parseInt(req.params.id);
@@ -488,6 +536,7 @@ app.post('/api/messages', async (req, res) => {
 
 // KIOSK CLIENT POLL
 app.get('/api/kiosk-client/:id', async (req, res) => {
+    console.log(`API call: /api/kiosk-client/${req.params.id}`);
     try {
         const kioskId = parseInt(req.params.id);
         const now = new Date().toISOString();
@@ -499,6 +548,17 @@ app.get('/api/kiosk-client/:id', async (req, res) => {
         const message = await get('SELECT * FROM messages WHERE kiosk_id = ? AND is_displayed = 0 LIMIT 1', [kioskId]);
         if (message) await run('UPDATE messages SET is_displayed = 1 WHERE id = ?', [message.id]);
         res.json({ links, message: message || null });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET KIOSK BY COMPUTER NAME
+app.get('/api/kiosk-by-computer-name', async (req, res) => {
+    try {
+        const computer_name = req.query.computer_name;
+        if (!computer_name) return res.status(400).json({ error: "computer_name required" });
+        const kiosk = await get('SELECT * FROM kiosks WHERE computer_name = ?', [computer_name]);
+        if (!kiosk) return res.status(404).json({ error: "Kiosk not found" });
+        res.json(kiosk);
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -597,9 +657,25 @@ async function migratePasswords() {
 
 initDb().then(async () => {
     try { await run("ALTER TABLE kiosk_links ADD COLUMN type TEXT DEFAULT 'url'"); } catch {}
+    try { await run("ALTER TABLE kiosks ADD COLUMN last_snapshot_url TEXT"); } catch {}
+    try { await run("ALTER TABLE kiosks ADD COLUMN last_snapshot_time TEXT"); } catch {}
     await migratePasswords();
-    app.listen(PORT, '0.0.0.0', () => {
+    const server = app.listen(PORT, '0.0.0.0', () => {
         console.log(`Kiosk Server is running on port ${PORT}...`);
+    });
+    server.on('error', err => {
+        if (err.code === 'EADDRINUSE') {
+            console.error(`\n==========================================`);
+            console.error(`שגיאה: פורט ${PORT} כבר בשימוש.`);
+            console.error(`השרת כנראה כבר רץ בחלון אחר.`);
+            console.error(`\nכדי לסגור את התהליך ב-Windows:`);
+            console.error(`  netstat -ano | findstr :${PORT}`);
+            console.error(`  taskkill /PID <PID> /F`);
+            console.error(`==========================================\n`);
+        } else {
+            console.error('Server error:', err.message);
+        }
+        process.exit(1);
     });
 }).catch(err => {
     console.error("Failed to initialize database:", err);

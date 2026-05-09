@@ -146,6 +146,10 @@
   document.getElementById('kioskUrl').addEventListener('keydown', e => {
     if (e.key === 'Enter') startPlayer();
   });
+
+  const _params = new URLSearchParams(window.location.search);
+  const _saved = _params.get('url');
+  if (_saved) document.getElementById('kioskUrl').value = _saved;
 </script>
 </body>
 </html>

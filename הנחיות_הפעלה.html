@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html dir="rtl" lang="he">
+<head>
+    <meta charset="UTF-8">
+    <title>הנחיות הפעלת מערכת קיוסק</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 40px;
+            line-height: 1.8;
+            color: #333;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            max-width: 900px;
+            margin: 0 auto;
+        }
+        h1 {
+            color: #1a1a2e;
+            border-bottom: 3px solid #6366f1;
+            padding-bottom: 10px;
+        }
+        h2 {
+            color: #16213e;
+            margin-top: 30px;
+            border-left: 4px solid #6366f1;
+            padding-left: 15px;
+        }
+        h3 {
+            color: #0f3460;
+            margin-top: 20px;
+        }
+        .section {
+            background: #f9f9f9;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 5px;
+            border-left: 4px solid #6366f1;
+        }
+        .code {
+            background: #1e1e1e;
+            color: #00ff00;
+            padding: 15px;
+            border-radius: 5px;
+            font-family: 'Courier New', monospace;
+            overflow-x: auto;
+            margin: 10px 0;
+        }
+        .warning {
+            background: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 5px;
+        }
+        .success {
+            background: #d4edda;
+            border-left: 4px solid #28a745;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 5px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 15px 0;
+        }
+        table tr {
+            border-bottom: 1px solid #ddd;
+        }
+        table th {
+            background: #6366f1;
+            color: white;
+            padding: 12px;
+            text-align: right;
+        }
+        table td {
+            padding: 10px 12px;
+            text-align: right;
+        }
+        ul {
+            margin: 15px 0;
+            padding-right: 25px;
+        }
+        li {
+            margin: 10px 0;
+        }
+        .highlight {
+            background: #fff3cd;
+            padding: 2px 6px;
+            border-radius: 3px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📋 הנחיות הפעלת מערכת קיוסק Kiosk Manager</h1>
+        <p style="color: #666; font-size: 14px;">גרסה 2.0 | תאריך: מאי 2026</p>
+
+        <hr>
+
+        <h2>📌 תוכן עניינים</h2>
+        <ul>
+            <li><a href="#server">הפעלת השרת</a></li>
+            <li><a href="#admin">ממשק הניהול (Admin)</a></li>
+            <li><a href="#client-exe">הפעלת צד הלקוח - EXE</a></li>
+            <li><a href="#client-html">הפעלת צד הלקוח - HTML</a></li>
+            <li><a href="#setup">הגדרה ראשונית</a></li>
+            <li><a href="#troubleshoot">פתרון בעיות</a></li>
+        </ul>
+
+        <hr>
+
+        <h2 id="server">🖥️ שלב 1: הפעלת השרת</h2>
+        <div class="section">
+            <p>השרת הוא הגב של המערכת. הוא מנהל את כל הנתונים, הקיוסקים, המשתמשים וההרשאות.</p>
+
+            <h3>צעדים:</h3>
+            <ol>
+                <li>פתח PowerShell או Command Prompt</li>
+                <li>עבור לתיקיית הפרויקט:
+                    <div class="code">cd "c:\Production apps\Claude code\Kiosk_project_Baseline_v2"</div>
+                </li>
+                <li>הפעל את השרת:
+                    <div class="code">node server.js</div>
+                </li>
+            </ol>
+
+            <div class="success">
+                <strong>✓ אם הכל תקין:</strong><br>
+                תראה את ההודעה: <span class="highlight">Kiosk Server is running on port 5190...</span>
+            </div>
+
+            <div class="warning">
+                <strong>⚠️ אם יש שגיאה:</strong><br>
+                אם יש שגיאת EADDRINUSE, זה אומר שהפורט כבר תפוס. הרוג את התהליך הקודם עם Ctrl+C
+            </div>
+
+            <h3>פרטים חשובים:</h3>
+            <table>
+                <tr>
+                    <th>פרט</th>
+                    <th>ערך</th>
+                </tr>
+                <tr>
+                    <td>כתובת</td>
+                    <td>http://localhost:5190</td>
+                </tr>
+                <tr>
+                    <td>בסיס נתונים</td>
+                    <td>C:\SQL_DB\Kiosk_project_Baseline_v2\kiosk.db</td>
+                </tr>
+                <tr>
+                    <td>הגדרות</td>
+                    <td>settings.json בתיקיית הרוט</td>
+                </tr>
+            </table>
+        </div>
+
+        <hr>
+
+        <h2 id="admin">👨‍💼 שלב 2: ממשק הניהול (Admin Console)</h2>
+        <div class="section">
+            <p>ממשק הניהול שלך מאפשר לך להגדיר קיוסקים, משתמשים, תוכן וטיקטים.</p>
+
+            <h3>גישה לממשק:</h3>
+            <ol>
+                <li>פתח דפדפן אינטרנט</li>
+                <li>כנס לכתובת:
+                    <div class="code">http://localhost:5190</div>
+                </li>
+                <li>התחבר עם שם משתמש וסיסמה:
+                    <table>
+                        <tr>
+                            <th>שם משתמש</th>
+                            <th>סיסמה</th>
+                        </tr>
+                        <tr>
+                            <td>kioskadmin</td>
+                            <td>qw12!@</td>
+                        </tr>
+                    </table>
+                </li>
+            </ol>
+
+            <h3>מה אתה יכול לעשות:</h3>
+            <ul>
+                <li>➕ <strong>הוספת קיוסקים:</strong> הגדר מחשבים חדשים עם שם, IP, תיאור</li>
+                <li>👥 <strong>ניהול משתמשים:</strong> צור משתמשים חדשים והתן להם הרשאות לקיוסקים</li>
+                <li>🔗 <strong>קישורים:</strong> הוסף URL או תמונות שיוצגו בקיוסקים</li>
+                <li>📢 <strong>הודעות:</strong> שלח הודעות למשתמשים בקיוסקים</li>
+                <li>⚙️ <strong>הגדרות:</strong> שנה נתיבי בסיס נתונים, הגדר כללים</li>
+            </ul>
+
+            <div class="warning">
+                <strong>⚠️ חשוב:</strong><br>
+                שנה את הסיסמה של kioskadmin בהקדם! לא משאיר את הסיסמה הדיפולטית בייצור.
+            </div>
+        </div>
+
+        <hr>
+
+        <h2 id="client-exe">🖱️ שלב 3: הפעלת צד הלקוח - EXE</h2>
+        <div class="section">
+            <p>ה-EXE הוא אפליקציית Electron שמריצה את הקיוסק במסך מלא. הוא מוצא אוטומטי את הקיוסק לפי שם המחשב.</p>
+
+            <h3>דרישות:</h3>
+            <ul>
+                <li>Windows 7 ומעלה</li>
+                <li>חיבור לשרת (אותה רשת או IP שניתן להגיע אליו)</li>
+                <li>שם המחשב צריך להתאים לשם בממשק הניהול</li>
+            </ul>
+
+            <h3>הפעלה:</h3>
+            <ol>
+                <li>עבור לתיקיה:
+                    <div class="code">C:\Production apps\Claude code\Kiosk_project_Baseline_v2\PlayerApp</div>
+                </li>
+                <li>הפעל את הקובץ:
+                    <div class="code">KioskPlayer.exe</div>
+                </li>
+            </ol>
+
+            <h3>צעדי ההפעלה הראשונה:</h3>
+            <ol>
+                <li>כנס את כתובת השרת (URL):
+                    <div class="code">http://localhost:5190</div>
+                    <p style="color: #666; font-size: 12px;">או כתובת ה-IP של השרת אם הוא במחשב אחר</p>
+                </li>
+                <li>המערכת תחפש את הקיוסק לפי שם המחשב של Windows</li>
+                <li>תוכן הקיוסק יוצג בתצוגה מלאה</li>
+            </ol>
+
+            <h3>קיצורי מקלדת:</h3>
+            <table>
+                <tr>
+                    <th>קיצור</th>
+                    <th>פעולה</th>
+                </tr>
+                <tr>
+                    <td>ESC</td>
+                    <td>יציאה מתצוגה מלאה</td>
+                </tr>
+                <tr>
+                    <td>F12</td>
+                    <td>איפוס הגדרות וחזרה לצעד ההגדרה</td>
+                </tr>
+            </table>
+
+            <div class="success">
+                <strong>💡 טיפ:</strong> אם אתה רוצה להפעיל את זה בכל פעם שהמחשב מתעורר, הוסף קיצור ל-KioskPlayer.exe לתיקיית ההפעלה (Startup).
+            </div>
+        </div>
+
+        <hr>
+
+        <h2 id="client-html">🌐 שלב 4: הפעלת צד הלקוח - HTML</h2>
+        <div class="section">
+            <p>קובץ HTML בדפדפן - אלטרנטיבה ל-EXE אם אתה רוצה להשתמש בדפדפן.</p>
+
+            <h3>גישה:</h3>
+            <p>פתח את ה-URL בדפדפן עם מזהה קיוסק:</p>
+            <div class="code">http://localhost:5190/Player_HTML.html?id=1</div>
+
+            <h3>הערות:</h3>
+            <ul>
+                <li>הוחלף את <span class="highlight">1</span> עם מזהה הקיוסק בפועל</li>
+                <li>ניתן להשתמש גם בכתובת IP:
+                    <div class="code">http://192.168.1.100:5190/Player_HTML.html?id=1</div>
+                </li>
+            </ul>
+
+            <h3>דוגמאות:</h3>
+            <table>
+                <tr>
+                    <th>קיוסק</th>
+                    <th>URL</th>
+                </tr>
+                <tr>
+                    <td>קיוסק 1</td>
+                    <td>http://localhost:5190/Player_HTML.html?id=1</td>
+                </tr>
+                <tr>
+                    <td>קיוסק 2</td>
+                    <td>http://localhost:5190/Player_HTML.html?id=2</td>
+                </tr>
+                <tr>
+                    <td>קיוסק 3</td>
+                    <td>http://localhost:5190/Player_HTML.html?id=3</td>
+                </tr>
+            </table>
+
+            <div class="warning">
+                <strong>⚠️ חשוב:</strong><br>
+                את צריך <span class="highlight">תמיד</span> את מזהה הקיוסק (?id=X) בכתובת! בלעדיו, הקובץ לא יעבוד.
+            </div>
+        </div>
+
+        <hr>
+
+        <h2 id="setup">⚙️ שלב 5: הגדרה ראשונית</h2>
+        <div class="section">
+            <h3>1️⃣ הוסף קיוסקים</h3>
+            <ol>
+                <li>בממשק הניהול, לחץ על "קיוסקים"</li>
+                <li>הוסף קיוסק חדש עם פרטים:
+                    <ul>
+                        <li><strong>שם:</strong> שם המחשב של Windows (חשוב!)</li>
+                        <li><strong>IP:</strong> כתובת IP של המחשב (אופציונלי)</li>
+                        <li><strong>תיאור:</strong> תיאור של המוקד</li>
+                        <li><strong>אזור:</strong> בחר אזור (צריך להוסיף אזור קודם)</li>
+                    </ul>
+                </li>
+            </ol>
+
+            <h3>2️⃣ צור אזורים</h3>
+            <ol>
+                <li>בממשק הניהול, לחץ על "אזורים"</li>
+                <li>הוסף אזורים חדשים (למשל: "כניסה", "מזומנים", "בנק")</li>
+                <li>הקצה קיוסקים לאזורים</li>
+            </ol>
+
+            <h3>3️⃣ צור משתמשים וקבע הרשאות</h3>
+            <ol>
+                <li>בממשק הניהול, לחץ על "משתמשים"</li>
+                <li>הוסף משתמש חדש</li>
+                <li>בחר את הרשאה:
+                    <ul>
+                        <li><strong>Admin:</strong> גישה מלאה לכל הקיוסקים</li>
+                        <li><strong>User:</strong> גישה רק לאזורים שמוקצים</li>
+                    </ul>
+                </li>
+                <li>הקצה אזורים למשתמש</li>
+            </ol>
+
+            <h3>4️⃣ הוסף קישורים ותמונות</h3>
+            <ol>
+                <li>בממשק הניהול, בחר קיוסק</li>
+                <li>לחץ על "קישורים"</li>
+                <li>הוסף URL או תמונה שתוצג בקיוסק</li>
+            </ol>
+
+            <div class="success">
+                <strong>✓ עכשיו:</strong><br>
+                המערכת מוכנה! הפעל את ה-EXE או ה-HTML והקיוסק יציג את התוכן שהגדרת.
+            </div>
+        </div>
+
+        <hr>
+
+        <h2 id="troubleshoot">🔧 פתרון בעיות</h2>
+        <div class="section">
+            <h3>❌ בעיה: "לא צוין מזהה קיוסק"</h3>
+            <ul>
+                <li><strong>סיבה:</strong> נפתח את Player_HTML.html בלי ?id=X</li>
+                <li><strong>פתרון:</strong> הוסף ?id=1 לכתובת</li>
+            </ul>
+
+            <h3>❌ בעיה: "משתמש לא נמצא"</h3>
+            <ul>
+                <li><strong>סיבה:</strong> שם המחשב לא קיים בממשק הניהול</li>
+                <li><strong>פתרון:</strong> הוסף קיוסק עם שם המחשב הנכון</li>
+            </ul>
+
+            <h3>❌ בעיה: "שגיאת חיבור"</h3>
+            <ul>
+                <li><strong>סיבה:</strong> כתובת השרת שגויה או השרת לא פעיל</li>
+                <li><strong>פתרון:</strong>
+                    <ol>
+                        <li>וודא שהשרת עובד (יראה "Kiosk Server is running...")</li>
+                        <li>בדוק שכתובת השרת נכונה</li>
+                        <li>בדוק חיבור רשת (ping localhost)</li>
+                    </ol>
+                </li>
+            </ul>
+
+            <h3>❌ בעיה: "כתובת כבר בשימוש (EADDRINUSE)"</h3>
+            <ul>
+                <li><strong>סיבה:</strong> תהליך אחר משתמש בפורט 5190</li>
+                <li><strong>פתרון:</strong>
+                    <ol>
+                        <li>תרוג את ה-PowerShell (Ctrl+C)</li>
+                        <li>אם זה לא עוזר, הפעל:
+                            <div class="code">netstat -ano | findstr :5190</div>
+                            <div class="code">taskkill /PID [PID] /F</div>
+                        </li>
+                    </ol>
+                </li>
+            </ul>
+
+            <h3>❌ בעיה: EXE לא משתמש בקיוסק הנכון</h3>
+            <ul>
+                <li><strong>סיבה:</strong> שם המחשב לא תואם בדיוק</li>
+                <li><strong>פתרון:</strong>
+                    <ol>
+                        <li>בדוק את שם המחשב שלך בפקודה:
+                            <div class="code">echo %COMPUTERNAME%</div>
+                        </li>
+                        <li>וודא שהקיוסק בממשק הניהול בעל אותו שם בדיוק (כולל אותיות גדולות/קטנות)</li>
+                    </ol>
+                </li>
+            </ul>
+        </div>
+
+        <hr>
+
+        <h2>📞 סיכום זרימת העבודה</h2>
+        <div class="section">
+            <table>
+                <tr>
+                    <th>שלב</th>
+                    <th>מה לעשות</th>
+                    <th>איפה</th>
+                </tr>
+                <tr>
+                    <td>1</td>
+                    <td>הפעל את השרת</td>
+                    <td>Command Line / PowerShell</td>
+                </tr>
+                <tr>
+                    <td>2</td>
+                    <td>קבע קיוסקים, משתמשים, תוכן</td>
+                    <td>http://localhost:5190 (Admin)</td>
+                </tr>
+                <tr>
+                    <td>3</td>
+                    <td>הפעל את ה-EXE או HTML בקיוסק</td>
+                    <td>כל מחשב המציג קיוסק</td>
+                </tr>
+                <tr>
+                    <td>4</td>
+                    <td>התוכן מוצג בקיוסק</td>
+                    <td>מסך הקיוסק (מלא/HTML)</td>
+                </tr>
+            </table>
+        </div>
+
+        <hr>
+
+        <div class="success" style="margin-top: 40px;">
+            <h3>✅ מוכן!</h3>
+            <p>אתה עכשיו מוכן להפעיל את מערכת קיוסק Kiosk Manager בהצלחה!</p>
+            <p style="font-size: 12px; color: #666;">אם יש שאלות, עיין בסעיף "פתרון בעיות" או בדוק את הלוגים של השרת.</p>
+        </div>
+    </div>
+</body>
+</html>

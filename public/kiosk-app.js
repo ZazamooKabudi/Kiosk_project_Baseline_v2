@@ -15,6 +15,9 @@ let msgTimerInterval = null;
 let isMsg = false;
 let progressAnim = null;
 
+// Get server base URL from current location
+const serverBase = window.location.origin;
+
 if (!kioskId) {
   noContent.classList.add('show');
   noContent.querySelector('.no-content-text').textContent = 'שגיאה: לא צוין מזהה קיוסק (ID)';
@@ -33,7 +36,7 @@ async function tryFullscreen() {
 
 async function fetchState() {
   try {
-    const res = await fetch(`/api/kiosk-client/${kioskId}`);
+    const res = await fetch(`${serverBase}/api/kiosk-client/${kioskId}`);
     const data = await res.json();
 
     const newStr = JSON.stringify(data.links);
