@@ -11,8 +11,35 @@ const SALT_ROUNDS = 12;
 const app = express();
 const PORT = 5190;
 
-const uploadsDir = path.join(__dirname, 'uploads');
-if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
+let uploadsDir;
+
+const logsDir = path.join(__dirname, 'logs');
+if (!fs.existsSync(logsDir)) fs.mkdirSync(logsDir);
+
+// ── Daily rotating logger — keeps last 7 files per prefix ────────
+function writeLog(prefix, line) {
+    const today = new Date().toISOString().slice(0, 10);
+    const file  = path.join(logsDir, `${prefix}-${today}.log`);
+    try {
+        fs.appendFileSync(file, line, 'utf8');
+        // Prune: keep only the 7 most recent dated files for this prefix
+        const re = new RegExp(`^${prefix}-\\d{4}-\\d{2}-\\d{2}\\.log$`);
+        const old = fs.readdirSync(logsDir).filter(f => re.test(f)).sort();
+        if (old.length > 7) old.slice(0, old.length - 7).forEach(f => {
+            try { fs.unlinkSync(path.join(logsDir, f)); } catch {}
+        });
+    } catch {}
+}
+
+function logError(e, req) {
+    const ctx  = req ? `${req.method} ${req.originalUrl}` : 'server';
+    const line = `[${new Date().toISOString()}] ${ctx} — ${e.stack || e.message}\n`;
+    writeLog('errors', line);
+}
+
+function logEvent(prefix, msg) {
+    writeLog(prefix, `[${new Date().toISOString()}] ${msg}\n`);
+}
 
 const upload = multer({
     storage: multer.diskStorage({
@@ -46,6 +73,9 @@ ensureSettings();
 const settings = loadSettings();
 const dbDir = process.env.DB_PATH || settings.db_path || DEFAULT_DB_DIR;
 if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
+
+uploadsDir = process.env.UPLOADS_PATH || settings.uploads_path || path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 
 const dbPath = path.join(dbDir, 'kiosk.db');
 const db = new sqlite3.Database(dbPath);
@@ -168,7 +198,7 @@ async function runPingSweep() {
         try {
             isAlive = await ping.promise.probe(kiosk.ip, { timeout: 2, extra: ['-n', '1'] });
         } catch (e) {
-            console.error("Ping error on", kiosk.ip, e);
+            logEvent('errors', `ping ${kiosk.ip} — ${e.message}`);
         }
         const status = isAlive.alive ? 'Online' : 'Offline';
         const time = new Date().toISOString();
@@ -184,14 +214,14 @@ async function runPingSweep() {
 
 setInterval(runPingSweep, 10 * 60 * 1000);
 
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 app.use(cors());
 app.use('/uploads', express.static(uploadsDir));
 app.use(express.static(path.join(__dirname, 'public')));
 
 // SETTINGS (settings.json)
 app.get('/api/settings', (req, res) => {
-    res.json({ ...loadSettings(), current_db_path: dbPath });
+    res.json({ ...loadSettings(), current_db_path: dbPath, current_uploads_path: uploadsDir });
 });
 
 app.post('/api/settings', (req, res) => {
@@ -202,14 +232,18 @@ app.post('/api/settings', (req, res) => {
             updated.db_path = req.body.db_path;
             try { fs.mkdirSync(req.body.db_path, { recursive: true }); } catch {}
         }
+        if (req.body.uploads_path !== undefined) {
+            updated.uploads_path = req.body.uploads_path;
+            try { fs.mkdirSync(req.body.uploads_path, { recursive: true }); } catch {}
+        }
         fs.writeFileSync(settingsPath, JSON.stringify(updated, null, 2), 'utf8');
         res.json({ success: true });
-    } catch (e) { res.status(500).json({ error: e.message }); }
+    } catch (e) { logError(e, req); res.status(500).json({ error: e.message }); }
 });
 
 // CONFIG
 app.get('/api/config', async (req, res) => {
-    try { res.json(await getConfig()); } catch (e) { res.status(500).json({ error: e.message }); }
+    try { res.json(await getConfig()); } catch (e) { logError(e, req); res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/config', async (req, res) => {
@@ -217,13 +251,13 @@ app.post('/api/config', async (req, res) => {
         for (const [key, value] of Object.entries(req.body))
             await run('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)', [key, String(value)]);
         res.json({ success: true });
-    } catch (e) { res.status(500).json({ error: e.message }); }
+    } catch (e) { logError(e, req); res.status(500).json({ error: e.message }); }
 });
 
 // PING
 app.post('/api/ping-all', async (req, res) => {
     try { await runPingSweep(); res.json({ success: true }); }
-    catch (e) { res.status(500).json({ error: e.message }); }
+    catch (e) { logError(e, req); res.status(500).json({ error: e.message }); }
 });
 
 // LOGIN
@@ -234,7 +268,7 @@ app.post('/api/login', async (req, res) => {
         if (user && await bcrypt.compare(password, user.password))
             res.json({ id: user.id, username: user.username, role: user.role });
         else res.status(401).json({ error: "Invalid credentials" });
-    } catch (e) { res.status(500).json({ error: e.message }); }
+    } catch (e) { logError(e, req); res.status(500).json({ error: e.message }); }
 });
 
 // USERS
@@ -243,7 +277,7 @@ app.get('/api/users', async (req, res) => {
         const users = await all('SELECT id, username, role FROM users');
         const user_areas = await all('SELECT * FROM user_areas');
         res.json({ users, user_areas });
-    } catch (e) { res.status(500).json({ error: e.message }); }
+    } catch (e) { logError(e, req); res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/users', async (req, res) => {
@@ -258,7 +292,7 @@ app.post('/api/users', async (req, res) => {
             for (const area_id of areas)
                 await run('INSERT OR IGNORE INTO user_areas (user_id, area_id) VALUES (?, ?)', [id, parseInt(area_id)]);
         res.json({ id });
-    } catch (e) { res.status(500).json({ error: e.message }); }
+    } catch (e) { logError(e, req); res.status(500).json({ error: e.message }); }
 });
 
 app.put('/api/users/:id', async (req, res) => {
@@ -277,7 +311,7 @@ app.put('/api/users/:id', async (req, res) => {
                 await run('INSERT OR IGNORE INTO user_areas (user_id, area_id) VALUES (?, ?)', [id, parseInt(area_id)]);
         }
         res.json({ success: true });
-    } catch (e) { res.status(500).json({ error: e.message }); }
+    } catch (e) { logError(e, req); res.status(500).json({ error: e.message }); }
 });
 
 app.delete('/api/users/:id', async (req, res) => {
@@ -286,7 +320,7 @@ app.delete('/api/users/:id', async (req, res) => {
         await run('DELETE FROM users WHERE id = ?', [id]);
         await run('DELETE FROM user_areas WHERE user_id = ?', [id]);
         res.json({ success: true });
-    } catch (e) { res.status(500).json({ error: e.message }); }
+    } catch (e) { logError(e, req); res.status(500).json({ error: e.message }); }
 });
 
 // AREAS
@@ -306,7 +340,7 @@ app.get('/api/areas', async (req, res) => {
             const placeholders = allowed.map(() => '?').join(',');
             res.json(await all(`SELECT * FROM areas WHERE id IN (${placeholders})`, allowed));
         }
-    } catch (e) { res.status(500).json({ error: e.message }); }
+    } catch (e) { logError(e, req); res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/areas', async (req, res) => {
@@ -314,7 +348,7 @@ app.post('/api/areas', async (req, res) => {
         const { name } = req.body;
         const result = await run('INSERT INTO areas (name) VALUES (?)', [name]);
         res.json({ id: result.lastID, name });
-    } catch (e) { res.status(500).json({ error: e.message }); }
+    } catch (e) { logError(e, req); res.status(500).json({ error: e.message }); }
 });
 
 app.delete('/api/areas/:id', async (req, res) => {
@@ -324,7 +358,7 @@ app.delete('/api/areas/:id', async (req, res) => {
         await run('DELETE FROM kiosks WHERE area_id = ?', [id]);
         await run('DELETE FROM user_areas WHERE area_id = ?', [id]);
         res.json({ success: true });
-    } catch (e) { res.status(500).json({ error: e.message }); }
+    } catch (e) { logError(e, req); res.status(500).json({ error: e.message }); }
 });
 
 // KIOSKS
@@ -349,8 +383,20 @@ app.get('/api/kiosks', async (req, res) => {
         }
 
         if (conditions.length) query += ' WHERE ' + conditions.join(' AND ');
-        res.json(await all(query, params));
-    } catch (e) { res.status(500).json({ error: e.message }); }
+        const kiosks = await all(query, params);
+        if (!kiosks.length) return res.json([]);
+        const ids = kiosks.map(k => k.id);
+        const links = await all(
+            `SELECT * FROM kiosk_links WHERE kiosk_id IN (${ids.map(() => '?').join(',')}) ORDER BY id`,
+            ids
+        );
+        const linksMap = {};
+        links.forEach(l => {
+            if (!linksMap[l.kiosk_id]) linksMap[l.kiosk_id] = [];
+            linksMap[l.kiosk_id].push(l);
+        });
+        res.json(kiosks.map(k => ({ ...k, links: linksMap[k.id] || [] })));
+    } catch (e) { logError(e, req); res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/kiosks', async (req, res) => {
@@ -369,7 +415,7 @@ app.post('/api/kiosks', async (req, res) => {
             [parseInt(area_id), ip, computer_name, description, station_manager, manager_email, notes, active, alertOff]
         );
         res.json({ id: result.lastID });
-    } catch (e) { res.status(500).json({ error: e.message }); }
+    } catch (e) { logError(e, req); res.status(500).json({ error: e.message }); }
 });
 
 app.put('/api/kiosks/:id', async (req, res) => {
@@ -387,7 +433,7 @@ app.put('/api/kiosks/:id', async (req, res) => {
             [parseInt(area_id), ip, computer_name, description, station_manager, manager_email, notes, is_active, alert_offline, id]
         );
         res.json({ success: true });
-    } catch (e) { res.status(500).json({ error: e.message }); }
+    } catch (e) { logError(e, req); res.status(500).json({ error: e.message }); }
 });
 
 app.delete('/api/kiosks/:id', async (req, res) => {
@@ -399,7 +445,7 @@ app.delete('/api/kiosks/:id', async (req, res) => {
         await run('DELETE FROM kiosks WHERE id = ?', [id]);
         await run('DELETE FROM kiosk_links WHERE kiosk_id = ?', [id]);
         res.json({ success: true });
-    } catch (e) { res.status(500).json({ error: e.message }); }
+    } catch (e) { logError(e, req); res.status(500).json({ error: e.message }); }
 });
 
 // KIOSK LINKS
@@ -410,7 +456,7 @@ app.get('/api/kiosks/:id/links', async (req, res) => {
         if (user_id && !await canAccessKiosk(user_id, id))
             return res.status(403).json({ error: "Access denied" });
         res.json(await all('SELECT * FROM kiosk_links WHERE kiosk_id = ?', [id]));
-    } catch (e) { res.status(500).json({ error: e.message }); }
+    } catch (e) { logError(e, req); res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/kiosks/:id/links', async (req, res) => {
@@ -424,7 +470,7 @@ app.post('/api/kiosks/:id/links', async (req, res) => {
             [kiosk_id, url, parseInt(duration_seconds)]
         );
         res.json({ id: result.lastID });
-    } catch (e) { res.status(500).json({ error: e.message }); }
+    } catch (e) { logError(e, req); res.status(500).json({ error: e.message }); }
 });
 
 app.put('/api/links/:id', async (req, res) => {
@@ -441,7 +487,7 @@ app.put('/api/links/:id', async (req, res) => {
             [newUrl, parseInt(duration_seconds) || link.duration_seconds, id]
         );
         res.json({ success: true });
-    } catch (e) { res.status(500).json({ error: e.message }); }
+    } catch (e) { logError(e, req); res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/kiosks/:id/links/image', upload.single('image'), async (req, res) => {
@@ -457,7 +503,7 @@ app.post('/api/kiosks/:id/links/image', upload.single('image'), async (req, res)
             [kiosk_id, url, parseInt(duration_seconds) || 30]
         );
         res.json({ id: result.lastID });
-    } catch (e) { res.status(500).json({ error: e.message }); }
+    } catch (e) { logError(e, req); res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/kiosks/:id/snapshot', upload.single('snapshot'), async (req, res) => {
@@ -477,7 +523,7 @@ app.post('/api/kiosks/:id/snapshot', upload.single('snapshot'), async (req, res)
         const time = new Date().toISOString();
         await run('UPDATE kiosks SET last_snapshot_url = ?, last_snapshot_time = ? WHERE id = ?', [url, time, kiosk_id]);
         res.json({ success: true, url, time });
-    } catch (e) { res.status(500).json({ error: e.message }); }
+    } catch (e) { logError(e, req); res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/kiosks/:id/snapshot-json', async (req, res) => {
@@ -486,23 +532,33 @@ app.post('/api/kiosks/:id/snapshot-json', async (req, res) => {
         const user_id = req.body.user_id ? parseInt(req.body.user_id) : null;
         const imageBase64 = req.body.image;
         if (!imageBase64) return res.status(400).json({ error: 'No snapshot image provided' });
+        if (isNaN(kiosk_id)) return res.status(400).json({ error: 'Invalid kiosk ID' });
         if (user_id && !await canAccessKiosk(user_id, kiosk_id))
             return res.status(403).json({ error: "Access denied" });
 
-        const kiosk = await get('SELECT last_snapshot_url FROM kiosks WHERE id = ?', [kiosk_id]);
-        if (kiosk && kiosk.last_snapshot_url) {
-            try { fs.unlinkSync(path.join(uploadsDir, path.basename(kiosk.last_snapshot_url))); } catch {}
+        // Verify kiosk exists — without this the UPDATE silently affects 0 rows
+        const kiosk = await get('SELECT id, last_snapshot_url FROM kiosks WHERE id = ?', [kiosk_id]);
+        if (!kiosk) {
+            logEvent('errors', `snapshot: kiosk_id=${kiosk_id} not found`);
+            return res.status(404).json({ error: `Kiosk ${kiosk_id} not found` });
         }
 
-        const filename = `${Date.now()}-${kiosk_id}.jpg`;
-        const destPath = path.join(uploadsDir, filename);
-        fs.writeFileSync(destPath, Buffer.from(imageBase64, 'base64'));
+        // Per-kiosk subfolder — fixed filename, overwrites previous
+        const kioskDir = path.join(uploadsDir, `kiosk_${kiosk_id}`);
+        if (!fs.existsSync(kioskDir)) fs.mkdirSync(kioskDir, { recursive: true });
 
-        const url = `/uploads/${filename}`;
+        const destPath = path.join(kioskDir, 'snapshot.jpg');
+        const imgBuf = Buffer.from(imageBase64, 'base64');
+        fs.writeFileSync(destPath, imgBuf);
+
+        const url = `/uploads/kiosk_${kiosk_id}/snapshot.jpg`;
         const time = new Date().toISOString();
         await run('UPDATE kiosks SET last_snapshot_url = ?, last_snapshot_time = ? WHERE id = ?', [url, time, kiosk_id]);
+
+        logEvent('snapshots', `kiosk_id=${kiosk_id} size=${imgBuf.length}B`);
+
         res.json({ success: true, url, time });
-    } catch (e) { res.status(500).json({ error: e.message }); }
+    } catch (e) { logError(e, req); res.status(500).json({ error: e.message }); }
 });
 
 app.delete('/api/links/:id', async (req, res) => {
@@ -517,7 +573,7 @@ app.delete('/api/links/:id', async (req, res) => {
         }
         await run('DELETE FROM kiosk_links WHERE id = ?', [id]);
         res.json({ success: true });
-    } catch (e) { res.status(500).json({ error: e.message }); }
+    } catch (e) { logError(e, req); res.status(500).json({ error: e.message }); }
 });
 
 // MESSAGES
@@ -531,12 +587,11 @@ app.post('/api/messages', async (req, res) => {
             [parseInt(kiosk_id), message, parseInt(duration_seconds), new Date().toISOString()]
         );
         res.json({ id: result.lastID });
-    } catch (e) { res.status(500).json({ error: e.message }); }
+    } catch (e) { logError(e, req); res.status(500).json({ error: e.message }); }
 });
 
 // KIOSK CLIENT POLL
 app.get('/api/kiosk-client/:id', async (req, res) => {
-    console.log(`API call: /api/kiosk-client/${req.params.id}`);
     try {
         const kioskId = parseInt(req.params.id);
         const now = new Date().toISOString();
@@ -548,7 +603,7 @@ app.get('/api/kiosk-client/:id', async (req, res) => {
         const message = await get('SELECT * FROM messages WHERE kiosk_id = ? AND is_displayed = 0 LIMIT 1', [kioskId]);
         if (message) await run('UPDATE messages SET is_displayed = 1 WHERE id = ?', [message.id]);
         res.json({ links, message: message || null });
-    } catch (e) { res.status(500).json({ error: e.message }); }
+    } catch (e) { logError(e, req); res.status(500).json({ error: e.message }); }
 });
 
 // GET KIOSK BY COMPUTER NAME
@@ -559,7 +614,7 @@ app.get('/api/kiosk-by-computer-name', async (req, res) => {
         const kiosk = await get('SELECT * FROM kiosks WHERE computer_name = ?', [computer_name]);
         if (!kiosk) return res.status(404).json({ error: "Kiosk not found" });
         res.json(kiosk);
-    } catch (e) { res.status(500).json({ error: e.message }); }
+    } catch (e) { logError(e, req); res.status(500).json({ error: e.message }); }
 });
 
 // SERVER INFO
@@ -595,13 +650,14 @@ async function sendOfflineAlerts() {
 
     if (kiosksToAlert.length === 0) return;
     if (!cfg.smtp_host || !cfg.smtp_user) {
-        console.warn("Emails not sent: SMTP is not configured in settings.");
+        logEvent('alerts', 'emails not sent: SMTP not configured');
         return;
     }
 
     let nodemailer;
     try { nodemailer = require('nodemailer'); } catch (e) {
-        console.error("Nodemailer is not installed. Please run 'npm install nodemailer'."); return;
+        logEvent('errors', 'nodemailer not installed — run: npm install nodemailer');
+        return;
     }
 
     const transporter = nodemailer.createTransport({
@@ -624,10 +680,10 @@ async function sendOfflineAlerts() {
             text: `שלום ${k.station_manager || 'אחראי'},\n\nהקיוסק "${k.computer_name}" (IP: ${k.ip}) מנותק כבר יותר מ-${offlineThreshold} ימים.\nסטטוס: ${offlineSince}.\n\nנא לבדוק את התחנה.\n\n— מערכת Kiosk Manager`
         }, async (error) => {
             if (error) {
-                console.error(`[Alert] שגיאה בשליחה אל ${k.manager_email}:`, error.message);
+                logEvent('alerts', `send failed → ${k.manager_email}: ${error.message}`);
             } else {
                 await run('UPDATE kiosks SET last_alert_date = ? WHERE id = ?', [todayStr, k.id]);
-                console.log(`[Alert] נשלחה התראה אל ${k.manager_email} עבור קיוסק ${k.computer_name}`);
+                logEvent('alerts', `sent → ${k.manager_email} kiosk=${k.computer_name}`);
             }
         });
     }
@@ -640,7 +696,7 @@ setInterval(() => {
         const dateStr = d.toISOString().split('T')[0];
         if (lastAlertRun !== dateStr) {
             lastAlertRun = dateStr;
-            sendOfflineAlerts().catch(e => console.error("[Alert] Error:", e));
+            sendOfflineAlerts().catch(e => logEvent('errors', `sendOfflineAlerts: ${e.message}`));
         }
     }
 }, 60 * 1000);

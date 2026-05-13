@@ -163,6 +163,7 @@ document.addEventListener('DOMContentLoaded', () => {
   $('saveSmtpBtn').onclick = saveSmtp;
   $('saveAlertsBtn').onclick = saveAlerts;
   $('saveDbPathBtn').onclick = saveDbPath;
+  $('saveUploadsPathBtn').onclick = saveUploadsPath;
 
   // ── AUTO REFRESH ─────────────────────────────────────────────
   setInterval(async () => {
@@ -265,30 +266,48 @@ function renderDashboard() {
     return;
   }
   grid.innerHTML = S.kiosks.map(k => {
-    const st = k.last_ping_status;
+    const st     = k.last_ping_status;
     const cls    = st === 'Online' ? 'online' : st === 'Offline' ? 'offline' : '';
     const dotCls = st === 'Online' ? 'dot-green' : st === 'Offline' ? 'dot-red' : 'dot-gray';
     const stTxt  = st === 'Online' ? 'מחובר' : st === 'Offline' ? 'מנותק' : 'לא ידוע';
     const area   = S.areas.find(a => a.id === k.area_id);
-    const kioskUrl = S.serverInfo.ip
-      ? `http://${S.serverInfo.ip}:${S.serverInfo.port||5110}/kiosk.html?id=${k.id}`
-      : '';
-    const snapshotInterval = S.config.snapshot_interval_seconds || 10;
-    const snapshotAge = k.last_snapshot_time
-      ? (Date.now() - new Date(k.last_snapshot_time).getTime()) / 1000
-      : Infinity;
-    const kioskInactive = snapshotAge > snapshotInterval * 2.5;
+    const now = Date.now();
+    const lastSeen = k.last_seen_time ? new Date(k.last_seen_time).getTime() : 0;
+    const agentActive = k.is_active !== 0 && (now - lastSeen) < 30000;
+
+    // ── Snapshot preview ──────────────────────────────────────────
+    let previewBody;
+    if (!agentActive) {
+      previewBody = '<div class="ks-preview-inactive"><span style="font-size:18px">⛔</span>Agent not active</div>';
+    } else if (k.last_snapshot_url) {
+      previewBody = `<img src="${h(k.last_snapshot_url)}?t=${Date.now()}" alt="תמונת מצב">`;
+    } else {
+      previewBody = '<div class="ks-preview-empty">ממתין לתמונת מצב...</div>';
+    }
+
+    // ── Status dot — clickable if IP exists (opens SCCM) ─────────
+    const dotHtml = k.ip
+      ? `<span class="dot ${dotCls} dot-clickable" title="חבר SCCM → ${k.ip}" onclick="openSCCM('${h(k.ip)}')"></span>`
+      : `<span class="dot ${dotCls}"></span>`;
+
     return `<div class="ks-card ${cls}">
       <div class="ks-name">${h(k.computer_name || k.description || 'קיוסק')}</div>
       <div class="ks-ip">${h(k.ip || '')}</div>
-      <div class="ks-status"><span class="dot ${dotCls}"></span>${stTxt}</div>
+      <div class="ks-status">${dotHtml}${stTxt}</div>
       ${area ? `<div style="font-size:10px;color:var(--tm);margin-top:4px">${h(area.name)}</div>` : ''}
       <div class="ks-desc">${h(k.description || 'אין תיאור')}</div>
-      <div class="ks-snapshot">
-        <div class="ks-snapshot-label">${snapshotInterval} שניות האחרונות</div>
-        ${kioskInactive ? '<div class="ks-snapshot-offline">⛔ קיוסק לא פעיל</div>' : k.last_snapshot_url ? `<img src="${h(k.last_snapshot_url)}?t=${Date.now()}">` : '<div class="ks-snapshot-empty">אין תמונת Snapshot</div>'}
+      <div class="ks-preview">
+        <div class="ks-preview-label">תמונת מצב</div>
+        ${previewBody}
       </div>
-      ${kioskUrl ? `<button class="ks-copy" onclick="copyText('${kioskUrl}')">📋 העתק קישור לקיוסק</button>` : ''}
+      <button class="ks-copy-btn" onclick="copyKioskUrlById(${k.id})">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" width="11" height="11"><rect x="5" y="5" width="9" height="9" rx="1.5"/><path d="M3.5 10.5H2a1 1 0 01-1-1V2a1 1 0 011-1h7.5a1 1 0 011 1v1.5"/></svg>
+        העתק קישור לקיוסק
+      </button>
+      <button class="ks-chrome-btn" onclick="downloadChromeLauncher(${k.id})">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" width="11" height="11"><circle cx="8" cy="8" r="6.5"/><circle cx="8" cy="8" r="2.5"/><path d="M8 5.5h6M8 5.5L5 10.7M8 5.5l-3 5.2"/></svg>
+        הפעל בכרום (Kiosk Mode)
+      </button>
     </div>`;
   }).join('');
 }
@@ -794,6 +813,8 @@ async function renderSettings() {
     const sv = await api.get('/api/settings');
     $('dbPath').value = sv.db_path || '';
     $('dbCurrentPath').textContent = `נתיב פעיל כעת: ${sv.current_db_path || sv.db_path || '—'}`;
+    $('uploadsPath').value = sv.uploads_path || '';
+    $('uploadsCurrentPath').textContent = `נתיב פעיל כעת: ${sv.current_uploads_path || sv.uploads_path || '—'}`;
   } catch {}
 }
 
@@ -837,6 +858,24 @@ async function saveDbPath() {
   finally   { btn.disabled = false; }
 }
 
+async function saveUploadsPath() {
+  const newPath = $('uploadsPath').value.trim();
+  if (!newPath) { toast('נא להכניס נתיב', 'error'); return; }
+  const btn = $('saveUploadsPathBtn'); btn.disabled = true;
+  try {
+    await api.post('/api/settings', { uploads_path: newPath });
+    toast('הנתיב נשמר — יש להפעיל מחדש את השרת להחלת השינוי', 'info');
+    const sv = await api.get('/api/settings');
+    $('uploadsCurrentPath').textContent = `נתיב פעיל כעת: ${sv.current_uploads_path || sv.uploads_path || '—'}`;
+  } catch { toast('שגיאה בשמירה', 'error'); }
+  finally   { btn.disabled = false; }
+}
+
+// ── SCCM Remote Control ──────────────────────────────────────────
+function openSCCM(ip) {
+  window.location.href = 'ms-sccm-remote://' + ip;
+}
+
 // ── HELPERS ──────────────────────────────────────────────────────
 function copyText(text) {
   if (navigator.clipboard) {
@@ -852,4 +891,52 @@ function copyText(text) {
 function copyKioskUrl() {
   const val = $('kioskUrlTemplate').value;
   if (val) copyText(val);
+}
+
+function copyKioskLink() {
+  if (!S.selectedKiosk) { toast('לא נבחר קיוסק', 'error'); return; }
+  copyKioskUrlById(S.selectedKiosk);
+}
+
+function copyKioskUrlById(id) {
+  const info = S.serverInfo || {};
+  const ip   = info.ip || window.location.hostname;
+  const port = info.port || window.location.port || 5190;
+  copyText(`http://${ip}:${port}/kiosk.html?id=${id}`);
+}
+
+function downloadChromeLauncher(id) {
+  if (!id) { toast('לא נבחר קיוסק', 'error'); return; }
+  const info = S.serverInfo || {};
+  const ip   = info.ip || window.location.hostname;
+  const port = info.port || window.location.port || 5190;
+  const url  = `http://${ip}:${port}/kiosk.html?id=${id}`;
+  const lines = [
+    '@echo off',
+    `set "KIOSK_URL=${url}"`,
+    `set "CHROME_DATA=%TEMP%\\kiosk_chrome_${id}"`,
+    '',
+    'set "CHROME="',
+    'if exist "%PROGRAMFILES%\\Google\\Chrome\\Application\\chrome.exe" set "CHROME=%PROGRAMFILES%\\Google\\Chrome\\Application\\chrome.exe"',
+    'if exist "%PROGRAMFILES(X86)%\\Google\\Chrome\\Application\\chrome.exe" set "CHROME=%PROGRAMFILES(X86)%\\Google\\Chrome\\Application\\chrome.exe"',
+    'if exist "%LOCALAPPDATA%\\Google\\Chrome\\Application\\chrome.exe" set "CHROME=%LOCALAPPDATA%\\Google\\Chrome\\Application\\chrome.exe"',
+    '',
+    'if "%CHROME%"=="" (',
+    '  echo Google Chrome not found. Please install Chrome and try again.',
+    '  pause',
+    '  exit /b 1',
+    ')',
+    '',
+    'start "" "%CHROME%" --kiosk --disable-web-security --user-data-dir="%CHROME_DATA%" "%KIOSK_URL%"',
+  ];
+  const bat  = lines.join('\r\n');
+  const blob = new Blob([bat], { type: 'application/octet-stream' });
+  const a    = document.createElement('a');
+  a.href     = URL.createObjectURL(blob);
+  a.download = `kiosk_${id}_chrome.bat`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(a.href);
+  toast('קובץ ההפעלה הורד');
 }

@@ -14,6 +14,7 @@ let linkTimer = null;
 let msgTimerInterval = null;
 let isMsg = false;
 let progressAnim = null;
+let firstFetch = true;
 
 // Get server base URL from current location
 const serverBase = window.location.origin;
@@ -39,9 +40,13 @@ async function fetchState() {
     const res = await fetch(`${serverBase}/api/kiosk-client/${kioskId}`);
     const data = await res.json();
 
-    const newStr = JSON.stringify(data.links);
-    if (newStr !== JSON.stringify(links)) {
-      links = data.links;
+    const incoming = Array.isArray(data.links) ? data.links : [];
+    const newStr = JSON.stringify(incoming);
+    const changed = newStr !== JSON.stringify(links);
+
+    if (firstFetch || changed) {
+      firstFetch = false;
+      links = incoming;
       if (!isMsg) playNext();
     }
 
